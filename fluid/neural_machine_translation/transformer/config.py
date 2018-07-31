@@ -70,19 +70,25 @@ class ModelHyperParams(object):
     # the dimension for word embeddings, which is also the last dimension of
     # the input and output of multi-head attention, position-wise feed-forward
     # networks, encoder and decoder.
-    d_model = 512
+    d_model = 16
     # size of the hidden layer in position-wise feed-forward networks.
-    d_inner_hid = 2048
+    d_inner_hid = 64
     # the dimension that keys are projected to for dot-product attention.
-    d_key = 64
+    d_key = 2
     # the dimension that values are projected to for dot-product attention.
-    d_value = 64
+    d_value = 2
     # number of head used in multi-head attention.
     n_head = 8
     # number of sub-layers to be stacked in the encoder and decoder.
     n_layer = 6
-    # dropout rate used by all dropout layers.
-    dropout = 0.1
+    # dropout rates of different modules.
+    prepostprocess_dropout = 0.0
+    attention_dropout = 0.0
+    relu_dropout = 0.0
+    # to process before each sub-layer
+    preprocess_cmd = "n"  # layer normalization
+    # to process after each sub-layer
+    postprocess_cmd = "da"  # dropout + residual connection
     # the flag indicating whether to share embedding and softmax weights.
     # vocabularies in source and target should be same for weight sharing.
     weight_sharing = True

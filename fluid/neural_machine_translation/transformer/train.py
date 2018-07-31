@@ -393,10 +393,12 @@ def train_loop(exe, train_progm, dev_count, sum_cost, avg_cost, lr_scheduler,
             tgt=batch.tgt.transpose(0,1).tolist()
             data = []
             for i, x in enumerate(src):
-                x = [0] + x + [1]
+                #x = [0] + x + [1]
                 y = tgt[i]
                 y[0] = 0
                 y = y + [1]
+                x = [i for i in x if i != 1]
+                y = [i for i in y if i != 1]
                 pair = (x,y[:-1],y[1:])
                 data.append(pair)
             data = [data]
@@ -480,7 +482,9 @@ def train(args):
         ModelHyperParams.max_length + 1, ModelHyperParams.n_layer,
         ModelHyperParams.n_head, ModelHyperParams.d_key,
         ModelHyperParams.d_value, ModelHyperParams.d_model,
-        ModelHyperParams.d_inner_hid, ModelHyperParams.dropout,
+        ModelHyperParams.d_inner_hid, ModelHyperParams.prepostprocess_dropout,
+        ModelHyperParams.attention_dropout, ModelHyperParams.relu_dropout,
+        ModelHyperParams.preprocess_cmd, ModelHyperParams.postprocess_cmd,
         ModelHyperParams.weight_sharing, TrainTaskConfig.label_smooth_eps)
     lr_scheduler = LearningRateScheduler(ModelHyperParams.d_model,
                                          TrainTaskConfig.warmup_steps,

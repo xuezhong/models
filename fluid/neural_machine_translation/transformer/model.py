@@ -19,7 +19,7 @@ def position_encoding_init(n_position, d_pos_vec):
     position_enc[1:, 1::2] = np.cos(position_enc[1:, 1::2])  # dim 2i+1
     return position_enc.astype("float32")
 
-
+name_cnt=0
 def multi_head_attention(queries,
                          keys,
                          values,
@@ -37,6 +37,9 @@ def multi_head_attention(queries,
     computing softmax activiation to mask certain selected positions so that
     they will not considered in attention weights.
     """
+    keys = queries if keys is None else keys
+    values = keys if values is None else values
+
     if not (len(queries.shape) == len(keys.shape) == len(values.shape) == 3):
         raise ValueError(
             "Inputs: quries, keys and values should all be 3-D tensors.")
@@ -45,15 +48,24 @@ def multi_head_attention(queries,
         """
         Add linear projection to queries, keys, and values.
         """
+        global name_cnt
+        name_cnt += 1
+        name = 'query_qxz_%d' % name_cnt
+        name = str(name)
         q = layers.fc(input=queries,
+                      param_attr=fluid.ParamAttr(name=name, 
+                          initializer=fluid.initializer.Normal(0.5, 0.0)),
                       size=d_key * n_head,
                       bias_attr=False,
                       num_flatten_dims=2)
+        #layers.Print(fluid.get_var(name))
         k = layers.fc(input=keys,
+                      param_attr=fluid.ParamAttr(initializer=fluid.initializer.Normal(0.5, 0.0)),
                       size=d_key * n_head,
                       bias_attr=False,
                       num_flatten_dims=2)
         v = layers.fc(input=values,
+                      param_attr=fluid.ParamAttr(initializer=fluid.initializer.Normal(0.5, 0.0)),
                       size=d_value * n_head,
                       bias_attr=False,
                       num_flatten_dims=2)
@@ -94,12 +106,12 @@ def multi_head_attention(queries,
         return layers.reshape(
             x=trans_x,
             shape=map(int, [0, 0, trans_x.shape[2] * trans_x.shape[3]]))
-
-    def scaled_dot_product_attention(q, k, v, attn_bias, d_model, dropout_rate):
+    
+    def scaled_dot_product_attention(q, k, v, attn_bias, d_key, dropout_rate):
         """
         Scaled Dot-Product Attention
         """
-        scaled_q = layers.scale(x=q, scale=d_model**-0.5)
+        scaled_q = layers.scale(x=q, scale=d_key**-0.5)
         product = layers.matmul(x=scaled_q, y=k, transpose_y=True)
         weights = layers.reshape(
             x=layers.elementwise_add(
@@ -109,12 +121,14 @@ def multi_head_attention(queries,
             act="softmax")
         weights = layers.reshape(
             x=weights, shape=product.shape, actual_shape=post_softmax_shape)
+        layers.Print(attn_bias)
+        layers.Print(weights)
         if dropout_rate:
             weights = layers.dropout(
                 weights, dropout_prob=dropout_rate, is_test=False)
         out = layers.matmul(weights, v)
         return out
-
+    layers.Print(queries)
     q, k, v = __compute_qkv(queries, keys, values, n_head, d_key, d_value)
 
     if cache is not None:  # use cache and concat time steps
@@ -125,20 +139,24 @@ def multi_head_attention(queries,
     k = __split_heads(k, n_head)
     v = __split_heads(v, n_head)
 
+    layers.Print(q)
     ctx_multiheads = scaled_dot_product_attention(q, k, v, attn_bias, d_model,
                                                   dropout_rate)
+    layers.Print(ctx_multiheads)
 
     out = __combine_heads(ctx_multiheads)
 
+    layers.Print(out)
     # Project back to the model size.
     proj_out = layers.fc(input=out,
                          size=d_model,
                          bias_attr=False,
                          num_flatten_dims=2)
+    layers.Print(proj_out)
     return proj_out
 
 
-def positionwise_feed_forward(x, d_inner_hid, d_hid):
+def positionwise_feed_forward(x, d_inner_hid, d_hid, dropout_rate):
     """
     Position-wise Feed-Forward Networks.
     This module consists of two linear transformations with a ReLU activation
@@ -148,6 +166,9 @@ def positionwise_feed_forward(x, d_inner_hid, d_hid):
                        size=d_inner_hid,
                        num_flatten_dims=2,
                        act="relu")
+    if dropout_rate:
+        hidden = layers.dropout(
+            hidden, dropout_prob=dropout_rate, is_test=False)
     out = layers.fc(input=hidden, size=d_hid, num_flatten_dims=2)
     return out
 
@@ -198,7 +219,8 @@ def prepare_encoder(src_word,
         size=[src_vocab_size, src_emb_dim],
         param_attr=fluid.ParamAttr(
             name=word_emb_param_name,
-            initializer=fluid.initializer.Normal(0., src_emb_dim**-0.5)))
+            initializer=fluid.initializer.Normal(0.5, 0.0)))
+    '''
     src_word_emb = layers.scale(x=src_word_emb, scale=src_emb_dim**0.5)
     src_pos_enc = layers.embedding(
         src_pos,
@@ -206,6 +228,8 @@ def prepare_encoder(src_word,
         param_attr=fluid.ParamAttr(
             name=pos_enc_param_name, trainable=False))
     enc_input = src_word_emb + src_pos_enc
+    '''
+    enc_input = src_word_emb 
     enc_input = layers.reshape(
         x=enc_input,
         shape=[batch_size, seq_len, src_emb_dim],
@@ -228,7 +252,11 @@ def encoder_layer(enc_input,
                   d_value,
                   d_model,
                   d_inner_hid,
-                  dropout_rate=0.,
+                  prepostprocess_dropout,
+                  attention_dropout,
+                  relu_dropout,
+                  preprocess_cmd,
+                  postprocess_cmd,
                   pre_softmax_shape=None,
                   post_softmax_shape=None):
     """The encoder layers that can be stacked to form a deep encoder.
@@ -238,12 +266,16 @@ def encoder_layer(enc_input,
     and droput.
     """
     attn_output = multi_head_attention(
-        enc_input, enc_input, enc_input, attn_bias, d_key, d_value, d_model,
-        n_head, dropout_rate, pre_softmax_shape, post_softmax_shape)
-    attn_output = post_process_layer(enc_input, attn_output, "dan",
-                                     dropout_rate)
-    ffd_output = positionwise_feed_forward(attn_output, d_inner_hid, d_model)
-    return post_process_layer(attn_output, ffd_output, "dan", dropout_rate)
+        pre_process_layer(enc_input, preprocess_cmd, prepostprocess_dropout),
+        None, None, attn_bias, d_key, d_value, d_model, n_head,
+        attention_dropout, pre_softmax_shape, post_softmax_shape)
+    attn_output = post_process_layer(enc_input, attn_output, postprocess_cmd,
+                                     prepostprocess_dropout)
+    ffd_output = positionwise_feed_forward(
+        pre_process_layer(attn_output, preprocess_cmd, prepostprocess_dropout),
+        d_inner_hid, d_model, relu_dropout)
+    return post_process_layer(attn_output, ffd_output, postprocess_cmd,
+                              prepostprocess_dropout)
 
 
 def encoder(enc_input,
@@ -254,7 +286,11 @@ def encoder(enc_input,
             d_value,
             d_model,
             d_inner_hid,
-            dropout_rate=0.,
+            prepostprocess_dropout,
+            attention_dropout,
+            relu_dropout,
+            preprocess_cmd,
+            postprocess_cmd,
             pre_softmax_shape=None,
             post_softmax_shape=None):
     """
@@ -270,10 +306,16 @@ def encoder(enc_input,
             d_value,
             d_model,
             d_inner_hid,
-            dropout_rate,
+            prepostprocess_dropout,
+            attention_dropout,
+            relu_dropout,
+            preprocess_cmd,
+            postprocess_cmd,
             pre_softmax_shape,
             post_softmax_shape, )
         enc_input = enc_output
+    enc_output = pre_process_layer(enc_output, preprocess_cmd,
+                                   prepostprocess_dropout)
     return enc_output
 
 
@@ -286,7 +328,11 @@ def decoder_layer(dec_input,
                   d_value,
                   d_model,
                   d_inner_hid,
-                  dropout_rate=0.,
+                  prepostprocess_dropout,
+                  attention_dropout,
+                  relu_dropout,
+                  preprocess_cmd,
+                  postprocess_cmd,
                   slf_attn_pre_softmax_shape=None,
                   slf_attn_post_softmax_shape=None,
                   src_attn_pre_softmax_shape=None,
@@ -297,25 +343,26 @@ def decoder_layer(dec_input,
     a multi-head attention is added to implement encoder-decoder attention.
     """
     slf_attn_output = multi_head_attention(
-        dec_input,
-        dec_input,
-        dec_input,
+        pre_process_layer(dec_input, preprocess_cmd, prepostprocess_dropout),
+        None,
+        None,
         slf_attn_bias,
         d_key,
         d_value,
         d_model,
         n_head,
-        dropout_rate,
+        attention_dropout,
         slf_attn_pre_softmax_shape,
         slf_attn_post_softmax_shape,
         cache, )
     slf_attn_output = post_process_layer(
         dec_input,
         slf_attn_output,
-        "dan",  # residual connection + dropout + layer normalization
-        dropout_rate, )
+        postprocess_cmd,
+        prepostprocess_dropout, )
     enc_attn_output = multi_head_attention(
-        slf_attn_output,
+        pre_process_layer(slf_attn_output, preprocess_cmd,
+                          prepostprocess_dropout),
         enc_output,
         enc_output,
         dec_enc_attn_bias,
@@ -323,23 +370,25 @@ def decoder_layer(dec_input,
         d_value,
         d_model,
         n_head,
-        dropout_rate,
+        attention_dropout,
         src_attn_pre_softmax_shape,
         src_attn_post_softmax_shape, )
     enc_attn_output = post_process_layer(
         slf_attn_output,
         enc_attn_output,
-        "dan",  # residual connection + dropout + layer normalization
-        dropout_rate, )
+        postprocess_cmd,
+        prepostprocess_dropout, )
     ffd_output = positionwise_feed_forward(
-        enc_attn_output,
+        pre_process_layer(enc_attn_output, preprocess_cmd,
+                          prepostprocess_dropout),
         d_inner_hid,
-        d_model, )
+        d_model,
+        relu_dropout, )
     dec_output = post_process_layer(
         enc_attn_output,
         ffd_output,
-        "dan",  # residual connection + dropout + layer normalization
-        dropout_rate, )
+        postprocess_cmd,
+        prepostprocess_dropout, )
     return dec_output
 
 
@@ -353,7 +402,11 @@ def decoder(dec_input,
             d_value,
             d_model,
             d_inner_hid,
-            dropout_rate=0.,
+            prepostprocess_dropout,
+            attention_dropout,
+            relu_dropout,
+            preprocess_cmd,
+            postprocess_cmd,
             slf_attn_pre_softmax_shape=None,
             slf_attn_post_softmax_shape=None,
             src_attn_pre_softmax_shape=None,
@@ -373,13 +426,19 @@ def decoder(dec_input,
             d_value,
             d_model,
             d_inner_hid,
-            dropout_rate,
+            prepostprocess_dropout,
+            attention_dropout,
+            relu_dropout,
+            preprocess_cmd,
+            postprocess_cmd,
             slf_attn_pre_softmax_shape,
             slf_attn_post_softmax_shape,
             src_attn_pre_softmax_shape,
             src_attn_post_softmax_shape,
             None if caches is None else caches[i], )
         dec_input = dec_output
+    dec_output = pre_process_layer(dec_output, preprocess_cmd,
+                                   prepostprocess_dropout)
     return dec_output
 
 
@@ -410,7 +469,11 @@ def transformer(
         d_value,
         d_model,
         d_inner_hid,
-        dropout_rate,
+        prepostprocess_dropout,
+        attention_dropout,
+        relu_dropout,
+        preprocess_cmd,
+        postprocess_cmd,
         weight_sharing,
         label_smooth_eps, ):
     if weight_sharing:
@@ -429,7 +492,11 @@ def transformer(
         d_value,
         d_model,
         d_inner_hid,
-        dropout_rate,
+        prepostprocess_dropout,
+        attention_dropout,
+        relu_dropout,
+        preprocess_cmd,
+        postprocess_cmd,
         weight_sharing,
         enc_inputs, )
 
@@ -445,7 +512,11 @@ def transformer(
         d_value,
         d_model,
         d_inner_hid,
-        dropout_rate,
+        prepostprocess_dropout,
+        attention_dropout,
+        relu_dropout,
+        preprocess_cmd,
+        postprocess_cmd,
         weight_sharing,
         dec_inputs,
         enc_output, )
@@ -477,7 +548,11 @@ def wrap_encoder(src_vocab_size,
                  d_value,
                  d_model,
                  d_inner_hid,
-                 dropout_rate,
+                 prepostprocess_dropout,
+                 attention_dropout,
+                 relu_dropout,
+                 preprocess_cmd,
+                 postprocess_cmd,
                  weight_sharing,
                  enc_inputs=None):
     """
@@ -499,9 +574,10 @@ def wrap_encoder(src_vocab_size,
         src_vocab_size,
         d_model,
         max_length,
-        dropout_rate,
+        prepostprocess_dropout,
         src_data_shape,
         word_emb_param_name=word_emb_param_names[0])
+    layers.Print(enc_input)
     enc_output = encoder(
         enc_input,
         src_slf_attn_bias,
@@ -511,7 +587,11 @@ def wrap_encoder(src_vocab_size,
         d_value,
         d_model,
         d_inner_hid,
-        dropout_rate,
+        prepostprocess_dropout,
+        attention_dropout,
+        relu_dropout,
+        preprocess_cmd,
+        postprocess_cmd,
         slf_attn_pre_softmax_shape,
         slf_attn_post_softmax_shape, )
     return enc_output
@@ -525,7 +605,11 @@ def wrap_decoder(trg_vocab_size,
                  d_value,
                  d_model,
                  d_inner_hid,
-                 dropout_rate,
+                 prepostprocess_dropout,
+                 attention_dropout,
+                 relu_dropout,
+                 preprocess_cmd,
+                 postprocess_cmd,
                  weight_sharing,
                  dec_inputs=None,
                  enc_output=None,
@@ -552,7 +636,7 @@ def wrap_decoder(trg_vocab_size,
         trg_vocab_size,
         d_model,
         max_length,
-        dropout_rate,
+        prepostprocess_dropout,
         trg_data_shape,
         word_emb_param_name=word_emb_param_names[0]
         if weight_sharing else word_emb_param_names[1])
@@ -567,7 +651,11 @@ def wrap_decoder(trg_vocab_size,
         d_value,
         d_model,
         d_inner_hid,
-        dropout_rate,
+        prepostprocess_dropout,
+        attention_dropout,
+        relu_dropout,
+        preprocess_cmd,
+        postprocess_cmd,
         slf_attn_pre_softmax_shape,
         slf_attn_post_softmax_shape,
         src_attn_pre_softmax_shape,
@@ -603,7 +691,11 @@ def fast_decode(
         d_value,
         d_model,
         d_inner_hid,
-        dropout_rate,
+        prepostprocess_dropout,
+        attention_dropout,
+        relu_dropout,
+        preprocess_cmd,
+        postprocess_cmd,
         weight_sharing,
         beam_size,
         max_out_len,
@@ -612,9 +704,10 @@ def fast_decode(
     Use beam search to decode. Caches will be used to store states of history
     steps which can make the decoding faster.
     """
-    enc_output = wrap_encoder(src_vocab_size, max_in_len, n_layer, n_head,
-                              d_key, d_value, d_model, d_inner_hid,
-                              dropout_rate, weight_sharing)
+    enc_output = wrap_encoder(
+        src_vocab_size, max_in_len, n_layer, n_head, d_key, d_value, d_model,
+        d_inner_hid, prepostprocess_dropout, attention_dropout, relu_dropout,
+        preprocess_cmd, postprocess_cmd, weight_sharing)
     start_tokens, init_scores, trg_src_attn_bias, trg_data_shape, \
         slf_attn_pre_softmax_shape, slf_attn_post_softmax_shape, \
         src_attn_pre_softmax_shape, src_attn_post_softmax_shape, \
@@ -679,7 +772,11 @@ def fast_decode(
                 d_value,
                 d_model,
                 d_inner_hid,
-                dropout_rate,
+                prepostprocess_dropout,
+                attention_dropout,
+                relu_dropout,
+                preprocess_cmd,
+                postprocess_cmd,
                 weight_sharing,
                 dec_inputs=(
                     pre_ids, pre_pos, None, pre_src_attn_bias, trg_data_shape,
