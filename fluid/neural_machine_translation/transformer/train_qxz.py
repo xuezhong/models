@@ -13,9 +13,7 @@ from optim import LearningRateScheduler
 from config import *
 import reader
 
-from pytorch_reader import  pytorch_reader, PytorchReaderConfig
-from onmt.inputters.dataset_base import (DatasetBase, UNK_WORD,
-                                         PAD_WORD, BOS_WORD, EOS_WORD) 
+
 def parse_args():
     parser = argparse.ArgumentParser("Training for Transformer.")
     parser.add_argument(
@@ -99,23 +97,13 @@ def parse_args():
 
     args = parser.parse_args()
     # Append args related to dict
-    pr_config = PytorchReaderConfig()
-    global train_iter
-    train_iter, fields= pytorch_reader(pr_config)
-    src_dict = fields["src"].vocab
-    trg_dict = fields["tgt"].vocab
-    '''
     src_dict = reader.DataReader.load_dict(args.src_vocab_fpath)
     trg_dict = reader.DataReader.load_dict(args.trg_vocab_fpath)
-    '''
-    start_token = trg_dict.stoi[BOS_WORD]
-    end_token = trg_dict.stoi[EOS_WORD]
-    unk_token = trg_dict.stoi[UNK_WORD]
     dict_args = [
         "src_vocab_size", str(len(src_dict)), "trg_vocab_size",
-        str(len(trg_dict)), "bos_idx", str(start_token),
-        "eos_idx", str(end_token), "unk_idx",
-        str(unk_token)
+        str(len(trg_dict)), "bos_idx", str(src_dict[args.special_token[0]]),
+        "eos_idx", str(src_dict[args.special_token[1]]), "unk_idx",
+        str(src_dict[args.special_token[2]])
     ]
     merge_cfg_from_list(args.opts + dict_args,
                         [TrainTaskConfig, ModelHyperParams])
@@ -343,7 +331,6 @@ def train_loop(exe, train_progm, dev_count, sum_cost, avg_cost, lr_scheduler,
         print "init fluid.framework.default_startup_program"
         exe.run(fluid.framework.default_startup_program())
 
-    '''
     train_data = reader.DataReader(
         src_vocab_fpath=args.src_vocab_fpath,
         trg_vocab_fpath=args.trg_vocab_fpath,
@@ -363,7 +350,7 @@ def train_loop(exe, train_progm, dev_count, sum_cost, avg_cost, lr_scheduler,
     train_data = read_multiple(
         reader=train_data.batch_generator,
         count=dev_count if args.use_token_batch else 1)
-    '''
+
     build_strategy = fluid.BuildStrategy()
     # Since the token number differs among devices, customize gradient scale to
     # use token average cost among multi-devices. and the gradient scale is
@@ -390,21 +377,7 @@ def train_loop(exe, train_progm, dev_count, sum_cost, avg_cost, lr_scheduler,
 
     for pass_id in xrange(TrainTaskConfig.pass_num):
         pass_start_time = time.time()
-        for id, batch in enumerate(train_iter()):
-            batch_id =  id
-            src=batch.src[0].transpose(0,1).tolist()
-            tgt=batch.tgt.transpose(0,1).tolist()
-            data = []
-            for i, x in enumerate(src):
-                #x = [0] + x + [1]
-                y = tgt[i]
-                y[0] = 0
-                y = y + [1]
-                x = [i for i in x if i != 1]
-                y = [i for i in y if i != 1]
-                pair = (x,y[:-1],y[1:])
-                data.append(pair)
-            data = [data]
+        for batch_id, data in enumerate(train_data()):
             feed_list = []
             total_num_token = 0
             if args.local:

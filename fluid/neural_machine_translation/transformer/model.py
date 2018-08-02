@@ -48,27 +48,41 @@ def multi_head_attention(queries,
         """
         Add linear projection to queries, keys, and values.
         """
-        global name_cnt
-        name_cnt += 1
-        name = 'query_qxz_%d' % name_cnt
-        name = str(name)
-        q = layers.fc(input=queries,
-                      param_attr=fluid.ParamAttr(name=name, 
-                          initializer=fluid.initializer.Normal(0.5, 0.0)),
-                      size=d_key * n_head,
-                      bias_attr=False,
-                      num_flatten_dims=2)
-        #layers.Print(fluid.get_var(name))
-        k = layers.fc(input=keys,
-                      param_attr=fluid.ParamAttr(initializer=fluid.initializer.Normal(0.5, 0.0)),
-                      size=d_key * n_head,
-                      bias_attr=False,
-                      num_flatten_dims=2)
-        v = layers.fc(input=values,
-                      param_attr=fluid.ParamAttr(initializer=fluid.initializer.Normal(0.5, 0.0)),
-                      size=d_value * n_head,
-                      bias_attr=False,
-                      num_flatten_dims=2)
+        if TrainTaskConfig.debug :
+            global name_cnt
+            name_cnt += 1
+            name = 'query_qxz_%d' % name_cnt
+            name = str(name)
+            q = layers.fc(input=queries,
+                          param_attr=fluid.ParamAttr(name=name, 
+                              initializer=fluid.initializer.Normal(0.5, 0.0)),
+                          size=d_key * n_head,
+                          bias_attr=False,
+                          num_flatten_dims=2)
+            k = layers.fc(input=keys,
+                          param_attr=fluid.ParamAttr(initializer=fluid.initializer.Normal(0.5, 0.0)),
+                          size=d_key * n_head,
+                          bias_attr=False,
+                          num_flatten_dims=2)
+            v = layers.fc(input=values,
+                          param_attr=fluid.ParamAttr(initializer=fluid.initializer.Normal(0.5, 0.0)),
+                          size=d_value * n_head,
+                          bias_attr=False,
+                          num_flatten_dims=2)
+        else:
+            q = layers.fc(input=queries,
+                          size=d_key * n_head,
+                          bias_attr=False,
+                          num_flatten_dims=2)
+            k = layers.fc(input=keys,
+                          size=d_key * n_head,
+                          bias_attr=False,
+                          num_flatten_dims=2)
+            v = layers.fc(input=values,
+                          size=d_value * n_head,
+                          bias_attr=False,
+                          num_flatten_dims=2)
+
         return q, k, v
 
     def __split_heads(x, n_head):
@@ -121,14 +135,16 @@ def multi_head_attention(queries,
             act="softmax")
         weights = layers.reshape(
             x=weights, shape=product.shape, actual_shape=post_softmax_shape)
-        layers.Print(attn_bias)
-        layers.Print(weights)
+        if TrainTaskConfig.debug :
+            layers.Print(attn_bias)
+            layers.Print(weights)
         if dropout_rate:
             weights = layers.dropout(
                 weights, dropout_prob=dropout_rate, is_test=False)
         out = layers.matmul(weights, v)
         return out
-    layers.Print(queries)
+    if TrainTaskConfig.debug :
+        layers.Print(queries)
     q, k, v = __compute_qkv(queries, keys, values, n_head, d_key, d_value)
 
     if cache is not None:  # use cache and concat time steps
@@ -139,20 +155,25 @@ def multi_head_attention(queries,
     k = __split_heads(k, n_head)
     v = __split_heads(v, n_head)
 
-    layers.Print(q)
+    if TrainTaskConfig.debug :
+        layers.Print(q)
     ctx_multiheads = scaled_dot_product_attention(q, k, v, attn_bias, d_model,
                                                   dropout_rate)
-    layers.Print(ctx_multiheads)
+    if TrainTaskConfig.debug :
+        layers.Print(ctx_multiheads)
 
     out = __combine_heads(ctx_multiheads)
 
-    layers.Print(out)
+    if TrainTaskConfig.debug :
+        layers.Print(out)
     # Project back to the model size.
     proj_out = layers.fc(input=out,
                          size=d_model,
                          bias_attr=False,
                          num_flatten_dims=2)
-    layers.Print(proj_out)
+     
+    if TrainTaskConfig.debug :
+        layers.Print(proj_out)
     return proj_out
 
 
@@ -214,22 +235,28 @@ def prepare_encoder(src_word,
     [batch_size, max_src_length_in_batch, d_model].
     This module is used at the bottom of the encoder stacks.
     """
-    src_word_emb = layers.embedding(
-        src_word,
-        size=[src_vocab_size, src_emb_dim],
-        param_attr=fluid.ParamAttr(
-            name=word_emb_param_name,
-            initializer=fluid.initializer.Normal(0.5, 0.0)))
-    '''
-    src_word_emb = layers.scale(x=src_word_emb, scale=src_emb_dim**0.5)
-    src_pos_enc = layers.embedding(
-        src_pos,
-        size=[src_max_len, src_emb_dim],
-        param_attr=fluid.ParamAttr(
-            name=pos_enc_param_name, trainable=False))
-    enc_input = src_word_emb + src_pos_enc
-    '''
-    enc_input = src_word_emb 
+    if TrainTaskConfig.debug :
+        src_word_emb = layers.embedding(
+            src_word,
+            size=[src_vocab_size, src_emb_dim],
+            param_attr=fluid.ParamAttr(
+                name=word_emb_param_name,
+                initializer=fluid.initializer.Normal(0.5, 0.0)))
+        enc_input = src_word_emb 
+    else:
+        src_word_emb = layers.embedding(
+            src_word,
+            size=[src_vocab_size, src_emb_dim],
+            param_attr=fluid.ParamAttr(
+                name=word_emb_param_name,
+                initializer=fluid.initializer.Normal(0., src_emb_dim**-0.5)))
+        src_word_emb = layers.scale(x=src_word_emb, scale=src_emb_dim**0.5)
+        src_pos_enc = layers.embedding(
+            src_pos,
+            size=[src_max_len, src_emb_dim],
+            param_attr=fluid.ParamAttr(
+                name=pos_enc_param_name, trainable=False))
+        enc_input = src_word_emb + src_pos_enc
     enc_input = layers.reshape(
         x=enc_input,
         shape=[batch_size, seq_len, src_emb_dim],
@@ -577,7 +604,9 @@ def wrap_encoder(src_vocab_size,
         prepostprocess_dropout,
         src_data_shape,
         word_emb_param_name=word_emb_param_names[0])
-    layers.Print(enc_input)
+     
+    if TrainTaskConfig.debug :
+        layers.Print(enc_input)
     enc_output = encoder(
         enc_input,
         src_slf_attn_bias,
