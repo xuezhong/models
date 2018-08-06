@@ -5,7 +5,7 @@ import paddle.fluid as fluid
 import paddle.fluid.layers as layers
 
 from config import *
-
+import sys
 
 def position_encoding_init(n_position, d_pos_vec):
     """
@@ -48,7 +48,7 @@ def multi_head_attention(queries,
         """
         Add linear projection to queries, keys, and values.
         """
-        if TrainTaskConfig.debug :
+        if TrainTaskConfig.debug:
             global name_cnt
             name_cnt += 1
             name = 'query_qxz_%d' % name_cnt
@@ -135,16 +135,20 @@ def multi_head_attention(queries,
             act="softmax")
         weights = layers.reshape(
             x=weights, shape=product.shape, actual_shape=post_softmax_shape)
-        if TrainTaskConfig.debug :
-            layers.Print(attn_bias)
+        if TrainTaskConfig.debug:
+            print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", weights
+            print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", product
+            print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", scaled_q
+            layers.Print(scaled_q)
             layers.Print(weights)
+            layers.Print(product)
+
+
         if dropout_rate:
             weights = layers.dropout(
                 weights, dropout_prob=dropout_rate, is_test=False)
         out = layers.matmul(weights, v)
         return out
-    if TrainTaskConfig.debug :
-        layers.Print(queries)
     q, k, v = __compute_qkv(queries, keys, values, n_head, d_key, d_value)
 
     if cache is not None:  # use cache and concat time steps
@@ -154,26 +158,37 @@ def multi_head_attention(queries,
     q = __split_heads(q, n_head)
     k = __split_heads(k, n_head)
     v = __split_heads(v, n_head)
-
-    if TrainTaskConfig.debug :
+    
+    if TrainTaskConfig.debug:
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", q
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", queries
         layers.Print(q)
+        layers.Print(queries)
+
+
     ctx_multiheads = scaled_dot_product_attention(q, k, v, attn_bias, d_model,
                                                   dropout_rate)
-    if TrainTaskConfig.debug :
+    if TrainTaskConfig.debug:
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", ctx_multiheads
         layers.Print(ctx_multiheads)
+
+
 
     out = __combine_heads(ctx_multiheads)
 
-    if TrainTaskConfig.debug :
+    if TrainTaskConfig.debug:
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", out
         layers.Print(out)
+
     # Project back to the model size.
     proj_out = layers.fc(input=out,
                          size=d_model,
                          bias_attr=False,
                          num_flatten_dims=2)
-     
-    if TrainTaskConfig.debug :
+    if TrainTaskConfig.debug:
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", proj_out
         layers.Print(proj_out)
+    
     return proj_out
 
 
@@ -235,7 +250,7 @@ def prepare_encoder(src_word,
     [batch_size, max_src_length_in_batch, d_model].
     This module is used at the bottom of the encoder stacks.
     """
-    if TrainTaskConfig.debug :
+    if TrainTaskConfig.debug:
         src_word_emb = layers.embedding(
             src_word,
             size=[src_vocab_size, src_emb_dim],
@@ -296,11 +311,25 @@ def encoder_layer(enc_input,
         pre_process_layer(enc_input, preprocess_cmd, prepostprocess_dropout),
         None, None, attn_bias, d_key, d_value, d_model, n_head,
         attention_dropout, pre_softmax_shape, post_softmax_shape)
+    if TrainTaskConfig.debug:
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", attn_output
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", enc_input
+        layers.Print(attn_output)
+        layers.Print(enc_input)
+
     attn_output = post_process_layer(enc_input, attn_output, postprocess_cmd,
                                      prepostprocess_dropout)
+    if TrainTaskConfig.debug:
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", attn_output
+        layers.Print(attn_output)
+
     ffd_output = positionwise_feed_forward(
         pre_process_layer(attn_output, preprocess_cmd, prepostprocess_dropout),
         d_inner_hid, d_model, relu_dropout)
+    if TrainTaskConfig.debug:
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", ffd_output
+        layers.Print(ffd_output)
+
     return post_process_layer(attn_output, ffd_output, postprocess_cmd,
                               prepostprocess_dropout)
 
@@ -341,6 +370,10 @@ def encoder(enc_input,
             pre_softmax_shape,
             post_softmax_shape, )
         enc_input = enc_output
+    if TrainTaskConfig.debug:
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", enc_input
+        layers.Print(enc_input)
+
     enc_output = pre_process_layer(enc_output, preprocess_cmd,
                                    prepostprocess_dropout)
     return enc_output
@@ -560,6 +593,10 @@ def transformer(
         logits=predict,
         label=label,
         soft_label=True if label_smooth_eps else False)
+    if TrainTaskConfig.debug:
+        layers.Print(weights)
+        layers.Print(label)
+        layers.Print(cost)
     weighted_cost = cost * weights
     sum_cost = layers.reduce_sum(weighted_cost)
     token_num = layers.reduce_sum(weights)
@@ -605,7 +642,7 @@ def wrap_encoder(src_vocab_size,
         src_data_shape,
         word_emb_param_name=word_emb_param_names[0])
      
-    if TrainTaskConfig.debug :
+    if TrainTaskConfig.debug:
         layers.Print(enc_input)
     enc_output = encoder(
         enc_input,
@@ -690,6 +727,8 @@ def wrap_decoder(trg_vocab_size,
         src_attn_pre_softmax_shape,
         src_attn_post_softmax_shape,
         caches, )
+    if TrainTaskConfig.debug:
+       layers.Print(enc_output)
     # Return logits for training and probs for inference.
     if weight_sharing:
         predict = layers.reshape(

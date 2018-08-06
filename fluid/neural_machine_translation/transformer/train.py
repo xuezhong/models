@@ -369,6 +369,9 @@ def train_loop(exe, train_progm, dev_count, sum_cost, avg_cost, lr_scheduler,
     # use token average cost among multi-devices. and the gradient scale is
     # `1 / token_number` for average cost.
     build_strategy.gradient_scale_strategy = fluid.BuildStrategy.GradientScaleStrategy.Customized
+    
+    if TrainTaskConfig.debug:
+        build_strategy.debug_graphviz_path="./ssa_graph.dot"
     train_exe = fluid.ParallelExecutor(
         use_cuda=TrainTaskConfig.use_gpu,
         loss_name=sum_cost.name,
@@ -435,6 +438,8 @@ def train_loop(exe, train_progm, dev_count, sum_cost, avg_cost, lr_scheduler,
                 feed_dict[sum_cost.name + "@GRAD"] = 1. / total_num_token
             outs = train_exe.run(fetch_list=[sum_cost.name, token_num.name],
                                  feed=feed_list)
+            if TrainTaskConfig.debug:
+                print "loss_name:" + avg_cost.name
             sum_cost_val, token_num_val = np.array(outs[0]), np.array(outs[1])
 	    total_sum_cost = total_sum_cost + sum_cost_val.sum()  # sum the cost from multi-devices
 	    total_token_num = total_token_num + token_num_val.sum()
