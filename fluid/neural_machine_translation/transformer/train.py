@@ -444,7 +444,7 @@ def train_loop(exe, train_progm, dev_count, sum_cost, avg_cost, lr_scheduler,
 	    total_sum_cost = total_sum_cost + sum_cost_val.sum()  # sum the cost from multi-devices
 	    total_token_num = total_token_num + token_num_val.sum()
 
-            if (batch_id + 1) % 100 == 0:
+            if (batch_id + 1) % 1 == 0:
 		total_avg_cost = total_sum_cost / total_token_num
 		print("epoch: %d, batch: %d, sum loss: %f, avg loss: %f, ppl: %f, lr:%f, consumed %fs" %
 		      (pass_id, batch_id + 1, total_sum_cost, total_avg_cost,
@@ -454,17 +454,12 @@ def train_loop(exe, train_progm, dev_count, sum_cost, avg_cost, lr_scheduler,
                 total_sum_cost = 0.0
                 total_token_num = 0
 
-            if batch_id % 10000 == 0:
-                fluid.io.save_persistables(
-                    exe,
-                    os.path.join(TrainTaskConfig.ckpt_dir,
-                                 "pass_" + str(pass_id) + "_batch_" + str(batch_id) + ".checkpoint"))
-                fluid.io.save_inference_model(
-                    os.path.join(TrainTaskConfig.model_dir,
-                                 "pass_" + str(pass_id) + "_batch_" + str(batch_id) + ".infer.model"),
-                    data_input_names[:-2] + util_input_names, [predict], exe)
-
             init = True
+            '''
+            if TrainTaskConfig.debug:
+                while('c' != raw_input()):
+                    continue
+            '''
         # Validate and save the model for inference.
         print("epoch: %d, " % pass_id +
               ("val avg loss: %f, val ppl: %f, " % test()

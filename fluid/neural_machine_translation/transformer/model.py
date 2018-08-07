@@ -415,11 +415,19 @@ def decoder_layer(dec_input,
         slf_attn_pre_softmax_shape,
         slf_attn_post_softmax_shape,
         cache, )
+    if TrainTaskConfig.debug:
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", slf_attn_output 
+        layers.Print(slf_attn_output)
+
     slf_attn_output = post_process_layer(
         dec_input,
         slf_attn_output,
         postprocess_cmd,
         prepostprocess_dropout, )
+    if TrainTaskConfig.debug:
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", slf_attn_output 
+        layers.Print(slf_attn_output)
+
     enc_attn_output = multi_head_attention(
         pre_process_layer(slf_attn_output, preprocess_cmd,
                           prepostprocess_dropout),
@@ -433,22 +441,43 @@ def decoder_layer(dec_input,
         attention_dropout,
         src_attn_pre_softmax_shape,
         src_attn_post_softmax_shape, )
+    if TrainTaskConfig.debug:
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", enc_attn_output 
+        layers.Print(enc_attn_output)
+
+
+
     enc_attn_output = post_process_layer(
         slf_attn_output,
         enc_attn_output,
         postprocess_cmd,
         prepostprocess_dropout, )
+    if TrainTaskConfig.debug:
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", enc_attn_output 
+        layers.Print(enc_attn_output)
+
+
     ffd_output = positionwise_feed_forward(
         pre_process_layer(enc_attn_output, preprocess_cmd,
                           prepostprocess_dropout),
         d_inner_hid,
         d_model,
         relu_dropout, )
+    if TrainTaskConfig.debug:
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", ffd_output 
+        layers.Print(ffd_output)
+
+
     dec_output = post_process_layer(
         enc_attn_output,
         ffd_output,
         postprocess_cmd,
         prepostprocess_dropout, )
+    if TrainTaskConfig.debug:
+        print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", dec_output 
+        layers.Print(dec_output)
+
+
     return dec_output
 
 
@@ -593,11 +622,18 @@ def transformer(
         logits=predict,
         label=label,
         soft_label=True if label_smooth_eps else False)
-    if TrainTaskConfig.debug:
-        layers.Print(weights)
-        layers.Print(label)
-        layers.Print(cost)
+    def debug_print(var):
+        if TrainTaskConfig.debug:
+            funcName = sys._getframe().f_back.f_code.co_name
+            lineNumber = sys._getframe().f_back.f_lineno
+            print __file__, funcName, lineNumber, var
+            layers.Print(var)
+    
     weighted_cost = cost * weights
+    debug_print(weights)
+    debug_print(label) 
+    debug_print(cost)
+    debug_print(weighted_cost)
     sum_cost = layers.reduce_sum(weighted_cost)
     token_num = layers.reduce_sum(weights)
     avg_cost = sum_cost / token_num
@@ -728,7 +764,8 @@ def wrap_decoder(trg_vocab_size,
         src_attn_post_softmax_shape,
         caches, )
     if TrainTaskConfig.debug:
-       layers.Print(enc_output)
+       print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", dec_output 
+       layers.Print(dec_output)
     # Return logits for training and probs for inference.
     if weight_sharing:
         predict = layers.reshape(
@@ -746,6 +783,10 @@ def wrap_decoder(trg_vocab_size,
                         num_flatten_dims=2),
             shape=[-1, trg_vocab_size],
             act="softmax" if dec_inputs is None else None)
+    if TrainTaskConfig.debug:
+       print __file__, sys._getframe().f_code.co_name, sys._getframe().f_lineno,":", predict 
+       layers.Print(predict, summarize=20) 
+
     return predict
 
 
