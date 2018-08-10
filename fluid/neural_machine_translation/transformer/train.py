@@ -446,11 +446,12 @@ def train_loop(exe, train_progm, dev_count, sum_cost, avg_cost, lr_scheduler,
 
             if (batch_id + 1) % 1 == 0:
 		total_avg_cost = total_sum_cost / total_token_num
-		print("epoch: %d, batch: %d, sum loss: %f, avg loss: %f, ppl: %f, lr:%f, consumed %fs" %
+		print("epoch: %d, batch: %d, sum loss: %f, avg loss: %f, ppl: %f, lr:%f, consumed %fs %d toks" %
 		      (pass_id, batch_id + 1, total_sum_cost, total_avg_cost,
 		       np.exp([min(total_avg_cost, 100)]),
                        lr_rate,
-		       (time.time() - pass_start_time)))
+		       (time.time() - pass_start_time),
+                       total_token_num))
                 total_sum_cost = 0.0
                 total_token_num = 0
 

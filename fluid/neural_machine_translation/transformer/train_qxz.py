@@ -374,10 +374,12 @@ def train_loop(exe, train_progm, dev_count, sum_cost, avg_cost, lr_scheduler,
     init = False
     total_sum_cost = 0.0
     total_token_num = 0
-
+    
+    batch_id = 0
     for pass_id in xrange(TrainTaskConfig.pass_num):
         pass_start_time = time.time()
-        for batch_id, data in enumerate(train_data()):
+        for bid, data in enumerate(train_data()):
+            batch_id = 1
             feed_list = []
             total_num_token = 0
             if args.local:
@@ -412,7 +414,7 @@ def train_loop(exe, train_progm, dev_count, sum_cost, avg_cost, lr_scheduler,
 	    total_sum_cost = total_sum_cost + sum_cost_val.sum()  # sum the cost from multi-devices
 	    total_token_num = total_token_num + token_num_val.sum()
 
-            if (batch_id + 1) % 100 == 0:
+            if (batch_id) % 100 == 0:
 		total_avg_cost = total_sum_cost / total_token_num
 		print("epoch: %d, batch: %d, sum loss: %f, avg loss: %f, ppl: %f, lr:%f, consumed %fs" %
 		      (pass_id, batch_id + 1, total_sum_cost, total_avg_cost,
@@ -422,11 +424,13 @@ def train_loop(exe, train_progm, dev_count, sum_cost, avg_cost, lr_scheduler,
                 total_sum_cost = 0.0
                 total_token_num = 0
 
-            if batch_id % 10000 == 0:
+            if batch_id % 1000 == 0:
+                '''
                 fluid.io.save_persistables(
                     exe,
                     os.path.join(TrainTaskConfig.ckpt_dir,
                                  "pass_" + str(pass_id) + "_batch_" + str(batch_id) + ".checkpoint"))
+                '''
                 fluid.io.save_inference_model(
                     os.path.join(TrainTaskConfig.model_dir,
                                  "pass_" + str(pass_id) + "_batch_" + str(batch_id) + ".infer.model"),
@@ -438,14 +442,17 @@ def train_loop(exe, train_progm, dev_count, sum_cost, avg_cost, lr_scheduler,
               ("val avg loss: %f, val ppl: %f, " % test()
                if args.val_file_pattern is not None else "") + "consumed %fs" %
               (time.time() - pass_start_time))
+        '''
         fluid.io.save_persistables(
             exe,
             os.path.join(TrainTaskConfig.ckpt_dir,
                          "pass_" + str(pass_id) + ".checkpoint"))
+        
         fluid.io.save_inference_model(
             os.path.join(TrainTaskConfig.model_dir,
                          "pass_" + str(pass_id) + ".infer.model"),
             data_input_names[:-2] + util_input_names, [predict], exe)
+        '''
 
 
 def train(args):
