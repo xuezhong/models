@@ -96,7 +96,7 @@ def train():
 
     logger.info('Running with args : {}'.format(args))
 
-    vocab_size = 10000
+    vocab_size = 1408482
     if model_type == "test":
         num_layers = 1
         batch_size = 2
@@ -135,14 +135,14 @@ def train():
         base_learning_rate = 1.0
     elif model_type == "large":
         num_layers = 2
-        batch_size = 20
-        hidden_size = 1500
-        num_steps = 35
+        batch_size = 128
+        hidden_size = 4096
+        num_steps = 20
         init_scale = 0.04
         max_grad_norm = 10.0
         epoch_start_decay = 14
         max_epoch = 55
-        dropout = 0.65
+        dropout = 0.1
         lr_decay = 1.0 / 1.15
         base_learning_rate = 1.0
     else:
@@ -182,7 +182,7 @@ def train():
 
     data_path = args.data_path
     print("begin to load data")
-    raw_data = reader.ptb_raw_data(data_path)
+    raw_data = reader.ptb_raw_data(data_path, args.vocab_path)
     print("finished load data")
     train_data, valid_data, test_data, _ = raw_data
 
@@ -230,9 +230,7 @@ def train():
         return ppl
 
     # get train epoch size
-    batch_len = len(train_data) // batch_size
-    epoch_size = (batch_len - 1) // num_steps
-    log_interval = epoch_size // 10
+    log_interval = 100
     total_time = 0.0
     for epoch_id in range(max_epoch):
         start_time = time.time()
@@ -244,7 +242,6 @@ def train():
 
         init_hidden = None
         init_cell = None
-        #debug_para(fluid.framework.default_main_program(), parallel_executor)
         total_loss = 0
         iters = 0
         init_hidden = np.zeros(

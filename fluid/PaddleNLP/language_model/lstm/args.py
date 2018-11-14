@@ -29,6 +29,8 @@ def parse_args():
         help="model_type [test|small|med|big]")
     parser.add_argument(
         "--data_path", type=str, help="all the data for train,valid,test")
+    parser.add_argument(
+        "--vocab_path", type=str, help="vocab file path")
     parser.add_argument('--para_init', action='store_true')
     parser.add_argument(
         '--use_gpu', type=bool, default=False, help='whether using gpu')
