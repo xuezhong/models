@@ -23,14 +23,43 @@ import distutils.util
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--model_type",
+        "--load_dir",
         type=str,
-        default="small",
-        help="model_type [test|small|med|big]")
+        default="",
+        help="Specify the path to load trained models.")
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=128,
+        help="The sequence number of a mini-batch data. (default: %(default)d)")
+    parser.add_argument(
+        "--embed_size",
+        type=int,
+        default=300,
+        help="The dimension of embedding table. (default: %(default)d)")
+    parser.add_argument(
+        "--hidden_size",
+        type=int,
+        default=300,
+        help="The size of rnn hidden unit. (default: %(default)d)")
+    parser.add_argument(
+        "--init_scale",
+        type=float,
+        default=0.01,
+        help="init scale. (default: %(default)f)")
+    parser.add_argument(
+        "--num_layers",
+        type=int,
+        default=2,
+        help="The size of rnn layers. (default: %(default)d)")
+    parser.add_argument(
+        "--num_steps",
+        type=int,
+        default=20,
+        help="The size of sequence len. (default: %(default)d)")
     parser.add_argument(
         "--data_path", type=str, help="all the data for train,valid,test")
-    parser.add_argument(
-        "--vocab_path", type=str, help="vocab file path")
+    parser.add_argument("--vocab_path", type=str, help="vocab file path")
     parser.add_argument('--para_init', action='store_true')
     parser.add_argument(
         '--use_gpu', type=bool, default=False, help='whether using gpu')
@@ -38,5 +67,29 @@ def parse_args():
         '--log_path',
         help='path of the log file. If not set, logs are printed to console')
     parser.add_argument('--enable_ce', action='store_true')
+    parser.add_argument('--optim', default='adam', help='optimizer type')
+    parser.add_argument('--para_print', action='store_true')
+    parser.add_argument(
+        "--learning_rate",
+        type=float,
+        default=0.001,
+        help="Learning rate used to train the model. (default: %(default)f)")
+    parser.add_argument(
+        "--log_interval",
+        type=int,
+        default=50,
+        help="log the train loss every n batches."
+        "(default: %(default)d)")
+    parser.add_argument(
+        "--dev_interval",
+        type=int,
+        default=1000,
+        help="cal dev loss every n batches."
+        "(default: %(default)d)")
+    parser.add_argument('--dropout', type=float, default=0.0)
+    parser.add_argument('--max_grad_norm', type=float, default=5.0)
+    parser.add_argument('--max_epoch', type=float, default=10)
+    parser.add_argument('--debug', type=bool, default=False)
     args = parser.parse_args()
+
     return args
