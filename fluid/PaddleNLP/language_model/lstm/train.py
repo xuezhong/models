@@ -46,6 +46,101 @@ import pickle
 
 SEED = 123
 
+names = []
+grad_names = []
+name_dict = {}
+
+slot_dict = {}
+
+
+def init_slot():
+    global slot_dict
+    slot_dict = {}
+
+
+def name2slot(para_name):
+    res = []
+    for key_name in name_dict.keys():
+        if para_name.find(key_name) >= 0:
+            res.append(name_dict[key_name])
+    return res
+
+
+def update_slot(slots, p_array):
+    p_mean, p_max, p_min, p_num = p_array.mean(), p_array.max(), p_array.min(
+    ), np.prod(p_array.shape)
+    for slot in slots:
+        if slot in slot_dict:
+            s_mean, s_max, s_min, s_num = slot_dict[slot]
+            s_mean = (s_mean * s_num + p_mean * p_num) / (p_num + s_num)
+            s_max = max(s_max, p_max)
+            s_min = min(s_min, p_min)
+            s_num = p_num + s_num
+            slot_dict[slot] = [s_mean, s_max, s_min, s_num]
+        else:
+            slot_dict[slot] = [p_mean, p_max, p_min, p_num]
+
+
+def record_slot(logger):
+    for slot in slot_dict:
+        logger.info("slot:" + "\t".join(
+            [str(x) for x in [slot] + slot_dict[slot]]))
+
+
+def var_print(tag, p_array, p_name, name, detail, logger):
+    param_num = np.prod(p_array.shape)
+    p_array3 = np.multiply(np.multiply(p_array, p_array), p_array)
+    logger.info(
+        tag +
+        ": {0} ({1}),  l3={2} sum={3}  max={4}  min={5} mean={6} num={7} {8}".
+        format(p_name, name,
+               p_array3.sum(),
+               p_array.sum(),
+               p_array.max(),
+               p_array.min(), p_array.mean(), p_array.shape, param_num))
+    if detail:
+        logger.info(" ".join([
+            tag + "[", p_name, '] shape [', str(p_array.shape), ']', str(
+                p_array)
+        ]))
+
+
+def print_para(train_prog, train_exe, logger, args):
+    if not args.para_print:
+        return
+    init_slot()
+    param_list = train_prog.block(0).all_parameters()
+    param_name_list = [p.name for p in param_list]
+    num_sum = 0
+    for name_pair in names:
+        name = name_pair[0]
+        p_name = name_pair[1]
+        if not train_exe.scope.find_var(name):
+            logger.info("var: {0} not find".format(p_name))
+            continue
+        p_array = np.array(train_exe.scope.find_var(name).get_tensor()).astype(
+            'float64')
+        var_print('var', p_array, p_name, name, args.detail, logger)
+    for name_pair in grad_names:
+        name = name_pair[0]
+        p_name = name_pair[1]
+        if not train_exe.scope.find_var(name):
+            logger.info("grad: {0} not find".format(p_name))
+            continue
+        p_array = np.array(train_exe.scope.find_var(name).get_tensor()).astype(
+            'float64')
+        var_print('grad', p_array, p_name, name, args.detail, logger)
+    for p_name in param_name_list:
+        p_array = np.array(train_exe.scope.find_var(p_name).get_tensor())
+        slots = name2slot(p_name)
+        if slots:
+            update_slot(slots, p_array)
+        param_num = np.prod(p_array.shape)
+        num_sum = num_sum + param_num
+        var_print('para', p_array, p_name, p_name, args.detail, logger)
+    record_slot(logger)
+    logger.info("total param num: {0}".format(num_sum))
+
 
 def prepare_batch_input(batch, epoch_id=0, with_lr=True):
     x, y = batch
@@ -99,23 +194,6 @@ def LodTensor_Array(lod_tensor):
     return new_array
 
 
-def print_para(train_prog, train_exe, logger, args):
-    if args.para_print:
-        param_list = train_prog.block(0).all_parameters()
-        param_name_list = [p.name for p in param_list]
-        num_sum = 0
-        for p_name in param_name_list:
-            p_array = np.array(train_exe.scope.find_var(p_name).get_tensor())
-            param_num = np.prod(p_array.shape)
-            num_sum = num_sum + param_num
-            logger.info(
-                "param: {0},  mean={1}  max={2}  min={3}  num={4} {5}".format(
-                    p_name,
-                    p_array.mean(),
-                    p_array.max(), p_array.min(), p_array.shape, param_num))
-        logger.info("total param num: {0}".format(num_sum))
-
-
 def get_current_model_para(train_prog, train_exe):
     param_list = train_prog.block(0).all_parameters()
     param_name_list = [p.name for p in param_list]
@@ -155,7 +233,6 @@ def eval(dev_data, inference_program, feed_order, dev_count, loss, place,
          logger, args):
     parallel_executor = fluid.ParallelExecutor(
         main_program=inference_program, use_cuda=bool(args.use_gpu))
-    print_para(inference_program, parallel_executor, logger, args)
 
     # Use test set as validation each pass
     total_loss = 0.0
@@ -323,6 +400,8 @@ def train():
                     total_loss += cost_train * args.batch_size * dev_count
 
                     if batch_id > 0 and batch_id % log_interval == 0:
+                        print_para(main_program, parallel_executor, logger,
+                                   args)
                         ppl = np.exp(total_loss / total_num)
                         logger.info("ppl {} {} ".format(batch_id, ppl))
                     if batch_id > 0 and batch_id % args.dev_interval == 0:

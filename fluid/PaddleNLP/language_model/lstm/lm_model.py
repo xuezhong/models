@@ -22,13 +22,14 @@ from paddle.fluid.layers.control_flow import StaticRNN as PaddingRNN
 import numpy as np
 
 
-def get_data(input_name, lod_level):
-    input_ids = layers.data(
-        name=input_name, shape=[1], dtype='int64', lod_level=lod_level)
-    return input_ids
+def linear(inputs, para_name, size):
+    return layers.fc(input=inputs,
+                     size=size,
+                     param_attr=fluid.ParamAttr(name=para_name + '_w'),
+                     bias_attr=fluid.ParamAttr(name=para_name + '_b'))
 
 
-def bi_lstm_encoder(input_seq, gate_size, para_name):
+def bi_lstm_encoder(input_seq, gate_size, para_name, proj_size):
     # A bi-directional lstm encoder implementation.
     # Linear transformation part for input gate, output gate, forget gate
     # and cell activation vectors need be done outside of dynamic_lstm.
@@ -46,21 +47,23 @@ def bi_lstm_encoder(input_seq, gate_size, para_name):
         size=gate_size * 4,
         act=None,
         bias_attr=False)
-    forward, _ = layers.dynamic_lstm(
+    forward, _ = layers.dynamic_lstmp(
         input=input_forward_proj,
         size=gate_size * 4,
-        use_peepholes=False,
-        param_attr=fluid.ParamAttr(name=para_name + '_fw_lstm_w'),
-        bias_attr=fluid.ParamAttr(name=para_name + '_fw_lstm_b'))
-    reversed, _ = layers.dynamic_lstm(
+        proj_size=proj_size,
+        use_peepholes=False)  #,
+    #param_attr=fluid.ParamAttr(name=para_name + '_fw_lstm_w'),
+    #bias_attr=fluid.ParamAttr(name=para_name + '_fw_lstm_b'))
+    reversed, _ = layers.dynamic_lstmp(
         input=input_reversed_proj,
-        param_attr=fluid.ParamAttr(name=para_name + '_bw_lstm_w'),
-        bias_attr=fluid.ParamAttr(name=para_name + '_bw_lstm_b'),
         size=gate_size * 4,
+        proj_size=proj_size,
         is_reverse=True,
         use_peepholes=False)
+    #param_attr=fluid.ParamAttr(name=para_name + '_bw_lstm_w'),
+    #bias_attr=fluid.ParamAttr(name=para_name + '_bw_lstm_b'))
 
-    encoder_out = layers.concat(input=[forward, reversed], axis=1)
+    encoder_out = [forward, reversed]
     return encoder_out
 
 
@@ -75,7 +78,7 @@ def lm_model(hidden_size,
     x = layers.data(name="x", shape=[1], dtype='int64', lod_level=1)
     y = layers.data(name="y", shape=[1], dtype='int64', lod_level=1)
 
-    emb_size = 512
+    emb_size = args.embed_size
     x_emb = layers.embedding(
         input=x,
         size=[vocab_size, emb_size],
@@ -91,21 +94,25 @@ def lm_model(hidden_size,
             x_emb,
             dropout_prob=dropout,
             dropout_implementation='upscale_in_train')
-    rnn_out = bi_lstm_encoder(x_emb, hidden_size, 'layer1')
+    rnn_out = bi_lstm_encoder(x_emb, hidden_size, 'layer1', emb_size)
+    lstm_outputs = bi_lstm_encoder(rnn_out, hidden_size, 'layer2', emb_size)
 
-    softmax_weight = layers.create_parameter([2*hidden_size, vocab_size], dtype="float32", name="softmax_weight", \
+    softmax_weight = layers.create_parameter([emb_size, vocab_size], dtype="float32", name="softmax_weight", \
             default_initializer=fluid.initializer.UniformInitializer(low=-init_scale, high=init_scale))
     softmax_bias = layers.create_parameter([vocab_size], dtype="float32", name='softmax_bias', \
             default_initializer=fluid.initializer.UniformInitializer(low=-init_scale, high=init_scale))
+    losses = []
+    for lstm_output in lstm_outputs:
+        projection = layers.matmul(lstm_output, softmax_weight)
+        projection = layers.elementwise_add(projection, softmax_bias)
 
-    projection = layers.matmul(rnn_out, softmax_weight)
-    projection = layers.elementwise_add(projection, softmax_bias)
+        projection = layers.reshape(projection, shape=[-1, vocab_size])
 
-    projection = layers.reshape(projection, shape=[-1, vocab_size])
-
-    loss = layers.softmax_with_cross_entropy(
-        logits=projection, label=y, soft_label=False)
-    loss = layers.reduce_mean(loss)
+        one_loss = layers.softmax_with_cross_entropy(
+            logits=projection, label=y, soft_label=False)
+        losses.append(one_loss)
+    losses = layers.concat(losses)
+    loss = layers.reduce_mean(losses)
     loss.permissions = True
 
     if args.debug:

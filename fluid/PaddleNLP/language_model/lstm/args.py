@@ -35,12 +35,12 @@ def parse_args():
     parser.add_argument(
         "--embed_size",
         type=int,
-        default=300,
+        default=512,
         help="The dimension of embedding table. (default: %(default)d)")
     parser.add_argument(
         "--hidden_size",
         type=int,
-        default=300,
+        default=4096,
         help="The size of rnn hidden unit. (default: %(default)d)")
     parser.add_argument(
         "--init_scale",
@@ -90,6 +90,7 @@ def parse_args():
     parser.add_argument('--max_grad_norm', type=float, default=5.0)
     parser.add_argument('--max_epoch', type=float, default=10)
     parser.add_argument('--debug', type=bool, default=False)
+    parser.add_argument('--detail', type=bool, default=False)
     args = parser.parse_args()
 
     return args
