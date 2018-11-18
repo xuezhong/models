@@ -90,7 +90,10 @@ def parse_args():
     parser.add_argument('--max_grad_norm', type=float, default=5.0)
     parser.add_argument('--max_epoch', type=float, default=10)
     parser.add_argument('--debug', type=bool, default=False)
+    parser.add_argument('--para_load_dir', type=str, default='')
+    parser.add_argument('--para_save_dir', type=str, default='')
     parser.add_argument('--detail', type=bool, default=False)
+    parser.add_argument('--random_seed', type=int, default=123)
     args = parser.parse_args()
 
     return args

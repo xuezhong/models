@@ -48,7 +48,28 @@ SEED = 123
 
 names = []
 grad_names = []
-name_dict = {}
+import collections
+
+name_dict = collections.OrderedDict()
+name_dict['embedding_para'] = 1
+name_dict['lstmp_0.b_0'] = 21
+name_dict['layer1_fw_gate_w'] = 22
+name_dict['lstmp_0.w_0'] = 22
+name_dict['lstmp_0.w_1'] = 23
+name_dict['lstmp_1.b_0'] = 31
+name_dict['layer1_bw_gate_w'] = 32
+name_dict['lstmp_1.w_0'] = 32
+name_dict['lstmp_1.w_1'] = 33
+name_dict['lstmp_2.b_0'] = 41
+name_dict['layer2_fw_gate_w'] = 42
+name_dict['lstmp_2.w_0'] = 42
+name_dict['lstmp_2.w_1'] = 43
+name_dict['lstmp_3.b_0'] = 51
+name_dict['layer2_bw_gate_w'] = 52
+name_dict['lstmp_3.w_0'] = 52
+name_dict['lstmp_3.w_1'] = 53
+name_dict['softmax_weight'] = 62
+name_dict['softmax_bias'] = 61
 
 slot_dict = {}
 
@@ -58,8 +79,13 @@ def init_slot():
     slot_dict = {}
 
 
-def name2slot(para_name):
+def name2slot(para_name, exact=False):
     res = []
+    if exact:
+        if para_name in name_dict:
+            return [name_dict[para_name]]
+        else:
+            return []
     for key_name in name_dict.keys():
         if para_name.find(key_name) >= 0:
             res.append(name_dict[key_name])
@@ -103,6 +129,88 @@ def var_print(tag, p_array, p_name, name, detail, logger):
             tag + "[", p_name, '] shape [', str(p_array.shape), ']', str(
                 p_array)
         ]))
+
+
+def save_var(p_array, name, logger, args):
+    if args.save_para_path:
+        if name2slot(name, exact=True):
+            name = 'slot_' + str(name2slot(name, exact=True)[0])
+        else:
+            name = name.replace('/', '%')
+        with open(os.path.join(args.save_para_path, name + '.data'),
+                  'wb') as fout:
+            pickle.dump(p_array, fout)
+
+
+def save_para(train_prog, train_exe, logger, args=None):
+    param_list = train_prog.block(0).all_parameters()
+    param_name_list = [p.name for p in param_list]
+    for var in param_list:
+        p_name = var.name
+        p_array = np.array(train_exe.scope.find_var(p_name).get_tensor(
+        )).astype('float64')
+        save_var(p_array, p_name, logger, args)
+
+
+def load_var(tensor, slot, place, logger, args):
+    with open(
+            os.path.join(args.para_load_dir, 'slot_' + str(slot[0]) + '.data'),
+            'rb') as fin:
+        p_array = pickle.load(fin)
+        if slot in [22, 32, 42, 52]:
+            tensor.set(p_array.astype(np.float32), place)
+        else:
+            tensor.set(p_array.astype(np.float32), place)
+
+
+def listDir(rootDir):
+    res = []
+    for filename in os.listdir(rootDir):
+        pathname = os.path.join(rootDir, filename)
+        if (os.path.isfile(pathname)):
+            res.append(pathname)
+    return res
+
+
+#load from slot file
+def load_params(train_prog, train_exe, place, logger, args=None):
+    if not args.para_load_dir:
+        return
+    logger.info('loading para from {}'.format(args.para_load_dir))
+    param_list = train_prog.block(0).all_parameters()
+    param_name_list = [p.name for p in param_list]
+    for data in listDir(args.para_load_dir):
+        slot = int(data.split('_')[1].split('.')[0])
+        with open(data, 'rb') as fin:
+            p_array = pickle.load(fin)
+            p_array = p_array.reshape((-1))
+            offset = 0
+            for name in name_dict:
+                s = name_dict[name]
+                if s == slot:
+                    tensor = train_exe.scope.find_var(name).get_tensor()
+                    shape = tensor.shape()
+                    tensor_len = np.prod(shape)
+                    new_array = p_array[offset:offset + tensor_len]
+                    new_array = new_array.reshape(shape)
+                    tensor.set(new_array.astype(np.float32), place)
+                    logger.info('loaded {}[{}] from {}[{}:{}]'.format(
+                        name, shape, data, offset, offset + tensor_len))
+                    offset += tensor_len
+
+
+def load_para(train_prog, train_exe, place, logger, args=None):
+    if not args.para_load_dir:
+        return
+    logger.info('loading para form {}'.format(args.para_load_dir))
+    param_list = train_prog.block(0).all_parameters()
+    param_name_list = [p.name for p in param_list]
+    for var in param_list:
+        p_name = var.name
+        tensor = train_exe.scope.find_var(p_name).get_tensor()
+        if name2slot(var.name, exact=True):
+            slot = name2slot(var.name, exact=True)
+            load_var(tensor, slot, place, logger, args)
 
 
 def print_para(train_prog, train_exe, logger, args):
@@ -272,12 +380,13 @@ def eval(dev_data, inference_program, feed_order, dev_count, loss, place,
 
 def train():
     args = parse_args()
+    if args.enable_ce:
+        random.seed(args.random_seed)
+        np.random.seed(args.random_seed)
     logger = logging.getLogger("lm")
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    if args.enable_ce:
-        fluid.default_startup_program().random_seed = SEED
     if args.log_path:
         file_handler = logging.FileHandler(args.log_path)
         file_handler.setLevel(logging.INFO)
@@ -321,6 +430,9 @@ def train():
     # build model
     main_program = fluid.Program()
     startup_prog = fluid.Program()
+    if args.enable_ce:
+        main_program.random_seed = args.random_seed
+        startup_prog.random_seed = args.random_seed
     with fluid.program_guard(main_program, startup_prog):
         with fluid.unique_name.guard():
             # Training process
@@ -373,6 +485,7 @@ def train():
             logger.info('Training the model...')
             parallel_executor = fluid.ParallelExecutor(
                 main_program=main_program, use_cuda=bool(args.use_gpu))
+            load_params(main_program, parallel_executor, place, logger, args)
             print_para(main_program, parallel_executor, logger, args)
 
             # get train epoch size
