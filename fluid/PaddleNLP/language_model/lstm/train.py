@@ -213,13 +213,27 @@ def load_para(train_prog, train_exe, place, logger, args=None):
             load_var(tensor, slot, place, logger, args)
 
 
-def print_para(train_prog, train_exe, logger, args):
+names = []
+grad_names = [
+]  #[['create_parameter_0.w_0@GRAD', 'create_parameter_0.w_0']]#,['embedding_para@GRAD', 'embedding_para']]
+
+
+def debug_init(train_prog, vars, vars_name):
+    for i in range(len(vars)):
+        name = vars[i].name + '@GRAD'
+        grad_names.append([name, vars_name[i]])
+        name = vars[i].name
+        names.append([name, vars_name[i]])
+    for name in names:
+        train_prog.block(0).var(name[0]).persistable = True
+    for name in grad_names:
+        if train_prog.block(0).has_var(name[0]):
+            train_prog.block(0).var(name[0]).persistable = True
+
+
+def debug_print(train_exe, logger, args):
     if not args.para_print:
         return
-    init_slot()
-    param_list = train_prog.block(0).all_parameters()
-    param_name_list = [p.name for p in param_list]
-    num_sum = 0
     for name_pair in names:
         name = name_pair[0]
         p_name = name_pair[1]
@@ -238,6 +252,16 @@ def print_para(train_prog, train_exe, logger, args):
         p_array = np.array(train_exe.scope.find_var(name).get_tensor()).astype(
             'float64')
         var_print('grad', p_array, p_name, name, args.detail, logger)
+
+
+def print_para(train_prog, train_exe, logger, args):
+    if not args.para_print:
+        return
+    debug_print(train_exe, logger, args)
+    init_slot()
+    param_list = train_prog.block(0).all_parameters()
+    param_name_list = [p.name for p in param_list]
+    num_sum = 0
     for p_name in param_name_list:
         p_array = np.array(train_exe.scope.find_var(p_name).get_tensor())
         slots = name2slot(p_name)
@@ -405,7 +429,7 @@ def train():
     batch_size = args.batch_size
     data_path = args.data_path
     logger.info("begin to load data")
-    raw_data = reader.ptb_raw_data(data_path, args.vocab_path)
+    raw_data = reader.ptb_raw_data(data_path, args.vocab_path, args)
     logger.info("finished load data")
     train_data, valid_data, test_data, vocab_size = raw_data
 
@@ -417,15 +441,6 @@ def train():
     else:
         place = fluid.CUDAPlace(0)
         dev_count = fluid.core.get_cuda_device_count()
-    # Training process
-    loss, feed_order = lm_model.lm_model(
-        hidden_size,
-        vocab_size,
-        batch_size,
-        num_layers=args.num_layers,
-        num_steps=args.num_steps,
-        init_scale=args.init_scale,
-        args=args)
     # clone from default main program and use it as the validation program
     # build model
     main_program = fluid.Program()
@@ -436,7 +451,7 @@ def train():
     with fluid.program_guard(main_program, startup_prog):
         with fluid.unique_name.guard():
             # Training process
-            loss, feed_order = lm_model.lm_model(
+            loss, feed_order, grad_vars, grad_vars_name = lm_model.lm_model(
                 hidden_size,
                 vocab_size,
                 batch_size,
@@ -483,8 +498,14 @@ def train():
             feeder = fluid.DataFeeder(feed_list, place)
 
             logger.info('Training the model...')
+            exe_strategy = fluid.parallel_executor.ExecutionStrategy()
+            if args.para_print:
+                exe_strategy.num_threads = 1
+                debug_init(main_program, grad_vars, grad_vars_name)
             parallel_executor = fluid.ParallelExecutor(
-                main_program=main_program, use_cuda=bool(args.use_gpu))
+                main_program=main_program,
+                use_cuda=bool(args.use_gpu),
+                exec_strategy=exe_strategy)
             load_params(main_program, parallel_executor, place, logger, args)
             print_para(main_program, parallel_executor, logger, args)
 

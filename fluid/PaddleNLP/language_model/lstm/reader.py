@@ -34,6 +34,11 @@ def listDir(rootDir):
     return res
 
 
+_unk = -1
+_bos = -1
+_eos = -1
+
+
 def _read_words(filename):
     data = []
     with open(filename, "r") as f:
@@ -58,6 +63,9 @@ def _load_vocab(filename):
     with open(filename, "r") as f:
         words = f.read().decode("utf-8").replace("\n", " ").split()
         word_to_id = dict(zip(words, range(len(words))))
+        _unk = word_to_id['<S>']
+        _eos = word_to_id['</S>']
+        _unk = word_to_id['<UNK>']
         return word_to_id
 
 
@@ -68,7 +76,7 @@ def _file_to_word_ids(filenames, word_to_id):
             yield id
 
 
-def ptb_raw_data(data_path=None, vocab_path=None):
+def ptb_raw_data(data_path=None, vocab_path=None, args=None):
     """Load PTB raw data from data directory "data_path".
 
   Reads PTB text files, converts strings to integer ids,
@@ -86,13 +94,17 @@ def ptb_raw_data(data_path=None, vocab_path=None):
     tuple (train_data, valid_data, test_data, vocabulary)
     where each of the data objects can be passed to PTBIterator.
   """
-
-    train_path = os.path.join(data_path, "train")
-    valid_path = os.path.join(data_path, "dev")
-    test_path = os.path.join(data_path, "dev")
     if vocab_path:
         word_to_id = _load_vocab(vocab_path)
-    train_data = _file_to_word_ids(listDir(train_path), word_to_id)
+
+    if not args.train_path:
+        train_path = os.path.join(data_path, "train")
+        train_data = _file_to_word_ids(listDir(train_path), word_to_id)
+    else:
+        train_path = args.train_path
+        train_data = _file_to_word_ids([train_path], word_to_id)
+    valid_path = os.path.join(data_path, "dev")
+    test_path = os.path.join(data_path, "dev")
     valid_data = _file_to_word_ids(listDir(valid_path), word_to_id)
     test_data = _file_to_word_ids(listDir(test_path), word_to_id)
     vocabulary = len(word_to_id)

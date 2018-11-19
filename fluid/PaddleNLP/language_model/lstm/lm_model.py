@@ -120,6 +120,10 @@ def lm_model(hidden_size,
         layers.Print(x_emb, summarize=10)
         layers.Print(projection, summarize=10)
         layers.Print(loss, summarize=10)
-
+    grad_vars = [x, y, x_emb] + rnn_out + lstm_outputs
+    grad_vars_name = [
+        'x', 'y', 'x_emb', 'rnn_out', 'rnn_out_r', 'lstm_output',
+        'lstm_output_r'
+    ]
     feeding_list = ['x', 'y']
-    return loss, feeding_list
+    return loss, feeding_list, grad_vars, grad_vars_name

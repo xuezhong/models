@@ -92,7 +92,8 @@ def parse_args():
     parser.add_argument('--debug', type=bool, default=False)
     parser.add_argument('--para_load_dir', type=str, default='')
     parser.add_argument('--para_save_dir', type=str, default='')
-    parser.add_argument('--detail', type=bool, default=False)
+    parser.add_argument('--train_path', type=str, default='')
+    parser.add_argument('--detail', action='store_true')
     parser.add_argument('--random_seed', type=int, default=123)
     args = parser.parse_args()
 
