@@ -29,8 +29,7 @@ import paddle.fluid.core as core
 import paddle.fluid.framework as framework
 from paddle.fluid.executor import Executor
 
-import reader
-
+import data
 import sys
 if sys.version[0] == '2':
     reload(sys)
@@ -274,8 +273,9 @@ def print_para(train_prog, train_exe, logger, args):
     logger.info("total param num: {0}".format(num_sum))
 
 
-def prepare_batch_input(batch, epoch_id=0, with_lr=True):
-    x, y = batch
+def prepare_batch_input(batch, args):
+    x = batch['token_ids']
+    y = batch['next_token_id']
     inst = []
     for i in range(len(x)):
         inst.append([x[i], y[i]])
@@ -424,14 +424,15 @@ def train():
 
     logger.info('Running with args : {}'.format(args))
 
-    vocab_size = 1408482
     hidden_size = args.hidden_size
     batch_size = args.batch_size
     data_path = args.data_path
     logger.info("begin to load data")
-    raw_data = reader.ptb_raw_data(data_path, args.vocab_path, args)
+    vocab = data.Vocabulary(args.vocab_path, validate_file=True)
+    vocab_size = vocab.size
+    raw_data = data.LMDataset(
+        args.train_path, vocab, test=False, shuffle_on_load=False)
     logger.info("finished load data")
-    train_data, valid_data, test_data, vocab_size = raw_data
 
     logger.info('Initialize the model...')
 
@@ -515,14 +516,13 @@ def train():
             for epoch_id in range(args.max_epoch):
                 start_time = time.time()
                 logger.info("epoch id {}".format(epoch_id))
-                train_data_iter = reader.get_data_iter(train_data, batch_size,
-                                                       args.num_steps)
+                train_data_iter = lambda: raw_data.iter_batches(batch_size, args.num_steps)
                 train_reader = read_multiple(train_data_iter, dev_count)
 
                 total_loss = 0
                 total_num = 0
                 n_batch_loss = 0.0
-                for batch_id, batch_list in enumerate(train_reader()):
+                for batch_id, batch_list in enumerate(train_reader(), 1):
                     feed_data = batch_reader(batch_list, args)
                     fetch_outs = parallel_executor.run(
                         feed=list(feeder.feed_parallel(feed_data, dev_count)),
