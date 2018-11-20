@@ -29,41 +29,34 @@ def linear(inputs, para_name, size):
                      bias_attr=fluid.ParamAttr(name=para_name + '_b'))
 
 
-def bi_lstm_encoder(input_seq, gate_size, para_name, proj_size):
+def lstmp_encoder(input_seq, gate_size, para_name, proj_size, args):
     # A bi-directional lstm encoder implementation.
     # Linear transformation part for input gate, output gate, forget gate
     # and cell activation vectors need be done outside of dynamic_lstm.
     # So the output size is 4 times of gate_size.
 
-    input_forward_proj = layers.fc(
-        input=input_seq,
-        param_attr=fluid.ParamAttr(name=para_name + '_fw_gate_w'),
-        size=gate_size * 4,
-        act=None,
-        bias_attr=False)
-    input_reversed_proj = layers.fc(
-        input=input_seq,
-        param_attr=fluid.ParamAttr(name=para_name + '_bw_gate_w'),
-        size=gate_size * 4,
-        act=None,
-        bias_attr=False)
+    if args.para_init:
+        init = fluid.initializer.Constant(args.init1)
+        init_b = fluid.initializer.Constant(0.0)
+    else:
+        init = None
+        init_b = None
+    input_forward_proj = layers.fc(input=input_seq,
+                                   param_attr=fluid.ParamAttr(
+                                       name=para_name + '_fw_gate_w',
+                                       initializer=init),
+                                   size=gate_size * 4,
+                                   act=None,
+                                   bias_attr=False)
     forward, _ = layers.dynamic_lstmp(
         input=input_forward_proj,
         size=gate_size * 4,
         proj_size=proj_size,
-        use_peepholes=False)  #,
-    #param_attr=fluid.ParamAttr(name=para_name + '_fw_lstm_w'),
-    #bias_attr=fluid.ParamAttr(name=para_name + '_fw_lstm_b'))
-    reversed, _ = layers.dynamic_lstmp(
-        input=input_reversed_proj,
-        size=gate_size * 4,
-        proj_size=proj_size,
-        is_reverse=True,
-        use_peepholes=False)
-    #param_attr=fluid.ParamAttr(name=para_name + '_bw_lstm_w'),
-    #bias_attr=fluid.ParamAttr(name=para_name + '_bw_lstm_b'))
+        use_peepholes=False,
+        param_attr=fluid.ParamAttr(initializer=init),
+        bias_attr=fluid.ParamAttr(initializer=init_b))
 
-    encoder_out = [forward, reversed]
+    encoder_out = forward
     return encoder_out
 
 
@@ -75,43 +68,55 @@ def lm_model(hidden_size,
              init_scale=0.1,
              args=None):
 
-    x = layers.data(name="x", shape=[1], dtype='int64', lod_level=1)
-    y = layers.data(name="y", shape=[1], dtype='int64', lod_level=1)
+    x_f = layers.data(name="x", shape=[1], dtype='int64', lod_level=1)
+    y_f = layers.data(name="y", shape=[1], dtype='int64', lod_level=1)
+
+    x_b = layers.data(name="x_r", shape=[1], dtype='int64', lod_level=1)
+    y_b = layers.data(name="y_r", shape=[1], dtype='int64', lod_level=1)
 
     emb_size = args.embed_size
-    x_emb = layers.embedding(
-        input=x,
-        size=[vocab_size, emb_size],
-        dtype='float32',
-        is_sparse=True,
-        param_attr=fluid.ParamAttr(
-            name='embedding_para',
-            initializer=fluid.initializer.UniformInitializer(
-                low=-init_scale, high=init_scale)))
-    dropout = args.dropout
-    if dropout != None and dropout > 0.0:
-        x_emb = layers.dropout(
-            x_emb,
-            dropout_prob=dropout,
-            dropout_implementation='upscale_in_train')
-    rnn_out = bi_lstm_encoder(x_emb, hidden_size, 'layer1', emb_size)
-    lstm_outputs = bi_lstm_encoder(rnn_out, hidden_size, 'layer2', emb_size)
+    lstm_outputs = []
 
-    softmax_weight = layers.create_parameter([emb_size, vocab_size], dtype="float32", name="softmax_weight", \
-            default_initializer=fluid.initializer.UniformInitializer(low=-init_scale, high=init_scale))
-    softmax_bias = layers.create_parameter([vocab_size], dtype="float32", name='softmax_bias', \
-            default_initializer=fluid.initializer.UniformInitializer(low=-init_scale, high=init_scale))
-    losses = []
-    for lstm_output in lstm_outputs:
-        projection = layers.matmul(lstm_output, softmax_weight)
+    def encoder(x, y, para_name, args):
+        x_emb = layers.embedding(
+            input=x,
+            size=[vocab_size, emb_size],
+            dtype='float32',
+            is_sparse=True,
+            param_attr=fluid.ParamAttr(
+                name='embedding_para',
+                initializer=fluid.initializer.UniformInitializer(
+                    low=-init_scale, high=init_scale)))
+        dropout = args.dropout
+        if dropout != None and dropout > 0.0:
+            x_emb = layers.dropout(
+                x_emb,
+                dropout_prob=dropout,
+                dropout_implementation='upscale_in_train')
+        rnn_out = lstmp_encoder(x_emb, hidden_size, para_name + 'layer1',
+                                emb_size, args)
+        rnn_out2 = lstmp_encoder(rnn_out, hidden_size, para_name + 'layer2',
+                                 emb_size, args)
+
+        rnn_out2 = rnn_out2 + rnn_out
+
+        softmax_weight = layers.create_parameter([vocab_size, emb_size], dtype="float32", name="softmax_weight", \
+                default_initializer=fluid.initializer.UniformInitializer(low=-init_scale, high=init_scale))
+        softmax_bias = layers.create_parameter([vocab_size], dtype="float32", name='softmax_bias', \
+                default_initializer=fluid.initializer.UniformInitializer(low=-init_scale, high=init_scale))
+        projection = layers.matmul(rnn_out2, softmax_weight, transpose_y=True)
         projection = layers.elementwise_add(projection, softmax_bias)
 
         projection = layers.reshape(projection, shape=[-1, vocab_size])
 
-        one_loss = layers.softmax_with_cross_entropy(
+        loss = layers.softmax_with_cross_entropy(
             logits=projection, label=y, soft_label=False)
-        losses.append(one_loss)
-    losses = layers.concat(losses)
+        return [x_emb, rnn_out, rnn_out2, projection, loss]
+
+    forward = encoder(x_f, y_f, 'forward', args)
+    backward = encoder(x_b, y_b, 'backward', args)
+
+    losses = layers.concat([forward[-1], backward[-1]])
     loss = layers.reduce_mean(losses)
     loss.permissions = True
 
@@ -120,10 +125,10 @@ def lm_model(hidden_size,
         layers.Print(x_emb, summarize=10)
         layers.Print(projection, summarize=10)
         layers.Print(loss, summarize=10)
-    grad_vars = [x, y, x_emb] + rnn_out + lstm_outputs
+    grad_vars = [x_f, y_f, x_b, y_b] + forward + backward
     grad_vars_name = [
-        'x', 'y', 'x_emb', 'rnn_out', 'rnn_out_r', 'lstm_output',
-        'lstm_output_r'
+        'x', 'y', 'x_r', 'y_r', 'x_emb', 'rnn_out', 'rnn_out2', 'proj', 'loss',
+        'x_emb_r', 'rnn_out_r', 'rnn_out2_r', 'proj_r', 'loss_r'
     ]
-    feeding_list = ['x', 'y']
+    feeding_list = ['x', 'y', 'x_r', 'y_r']
     return loss, feeding_list, grad_vars, grad_vars_name

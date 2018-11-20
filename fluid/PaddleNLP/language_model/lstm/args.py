@@ -61,6 +61,7 @@ def parse_args():
         "--data_path", type=str, help="all the data for train,valid,test")
     parser.add_argument("--vocab_path", type=str, help="vocab file path")
     parser.add_argument('--para_init', action='store_true')
+    parser.add_argument('--init1', type=float, default=0.1)
     parser.add_argument(
         '--use_gpu', type=bool, default=False, help='whether using gpu')
     parser.add_argument(

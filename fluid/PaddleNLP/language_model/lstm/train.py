@@ -51,6 +51,7 @@ import collections
 
 name_dict = collections.OrderedDict()
 name_dict['embedding_para'] = 1
+'''
 name_dict['lstmp_0.b_0'] = 21
 name_dict['layer1_fw_gate_w'] = 22
 name_dict['lstmp_0.w_0'] = 22
@@ -67,6 +68,7 @@ name_dict['lstmp_3.b_0'] = 51
 name_dict['layer2_bw_gate_w'] = 52
 name_dict['lstmp_3.w_0'] = 52
 name_dict['lstmp_3.w_1'] = 53
+#'''
 name_dict['softmax_weight'] = 62
 name_dict['softmax_bias'] = 61
 
@@ -275,10 +277,12 @@ def print_para(train_prog, train_exe, logger, args):
 
 def prepare_batch_input(batch, args):
     x = batch['token_ids']
+    x_r = batch['token_ids_reverse']
     y = batch['next_token_id']
+    y_r = batch['next_token_id_reverse']
     inst = []
     for i in range(len(x)):
-        inst.append([x[i], y[i]])
+        inst.append([x[i], y[i], x_r[i], y_r[i]])
     return inst
 
 
@@ -430,7 +434,7 @@ def train():
     logger.info("begin to load data")
     vocab = data.Vocabulary(args.vocab_path, validate_file=True)
     vocab_size = vocab.size
-    raw_data = data.LMDataset(
+    raw_data = data.BidirectionalLMDataset(
         args.train_path, vocab, test=False, shuffle_on_load=False)
     logger.info("finished load data")
 
@@ -543,6 +547,8 @@ def train():
                                          feed_order, dev_count, loss, place,
                                          logger, args)
                         logger.info("valid ppl {}".format(valid_ppl))
+                    if args.detail and batch_id > 10:
+                        exit()
 
                 end_time = time.time()
                 total_time += end_time - start_time
