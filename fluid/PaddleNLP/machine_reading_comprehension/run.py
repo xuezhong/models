@@ -207,9 +207,7 @@ def validation(inference_program, avg_cost, s_probs, e_probs, match, feed_order,
         
     """
     parallel_executor = fluid.ParallelExecutor(
-        main_program=inference_program,
-        use_cuda=bool(args.use_gpu),
-        loss_name=avg_cost.name)
+        main_program=inference_program, use_cuda=bool(args.use_gpu))
     print_para(inference_program, parallel_executor, logger, args)
 
     # Use test set as validation each pass
