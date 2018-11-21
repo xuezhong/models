@@ -22,15 +22,19 @@ from paddle.fluid.layers.control_flow import StaticRNN as PaddingRNN
 import numpy as np
 
 
-def linear(inputs, para_name, size):
-    return layers.fc(input=inputs,
-                     size=size,
-                     param_attr=fluid.ParamAttr(name=para_name + '_w'),
-                     bias_attr=fluid.ParamAttr(name=para_name + '_b'))
+def dropout(input, args):
+    if args.dropout:
+        return layers.dropout(
+            input,
+            dropout_prob=args.dropout,
+            seed=args.random_seed,
+            is_test=False)
+    else:
+        return input
 
 
 def lstmp_encoder(input_seq, gate_size, para_name, proj_size, args):
-    # A bi-directional lstm encoder implementation.
+    # A lstm encoder implementation with projection.
     # Linear transformation part for input gate, output gate, forget gate
     # and cell activation vectors need be done outside of dynamic_lstm.
     # So the output size is 4 times of gate_size.
@@ -41,9 +45,10 @@ def lstmp_encoder(input_seq, gate_size, para_name, proj_size, args):
     else:
         init = None
         init_b = None
+    input_seq = dropout(input_seq, args)
     input_forward_proj = layers.fc(input=input_seq,
                                    param_attr=fluid.ParamAttr(
-                                       name=para_name + '_fw_gate_w',
+                                       name=para_name + '_gate_w',
                                        initializer=init),
                                    size=gate_size * 4,
                                    act=None,
@@ -87,18 +92,13 @@ def lm_model(hidden_size,
                 name='embedding_para',
                 initializer=fluid.initializer.UniformInitializer(
                     low=-init_scale, high=init_scale)))
-        dropout = args.dropout
-        if dropout != None and dropout > 0.0:
-            x_emb = layers.dropout(
-                x_emb,
-                dropout_prob=dropout,
-                dropout_implementation='upscale_in_train')
         rnn_out = lstmp_encoder(x_emb, hidden_size, para_name + 'layer1',
                                 emb_size, args)
         rnn_out2 = lstmp_encoder(rnn_out, hidden_size, para_name + 'layer2',
                                  emb_size, args)
 
         rnn_out2 = rnn_out2 + rnn_out
+        rnn_out2 = dropout(rnn_out2, args)
 
         softmax_weight = layers.create_parameter([vocab_size, emb_size], dtype="float32", name="softmax_weight", \
                 default_initializer=fluid.initializer.UniformInitializer(low=-init_scale, high=init_scale))
@@ -113,8 +113,8 @@ def lm_model(hidden_size,
             logits=projection, label=y, soft_label=False)
         return [x_emb, rnn_out, rnn_out2, projection, loss]
 
-    forward = encoder(x_f, y_f, 'forward', args)
-    backward = encoder(x_b, y_b, 'backward', args)
+    forward = encoder(x_f, y_f, 'fw_', args)
+    backward = encoder(x_b, y_b, 'bw_', args)
 
     losses = layers.concat([forward[-1], backward[-1]])
     loss = layers.reduce_mean(losses)

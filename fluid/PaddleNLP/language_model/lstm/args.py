@@ -68,32 +68,33 @@ def parse_args():
         '--log_path',
         help='path of the log file. If not set, logs are printed to console')
     parser.add_argument('--enable_ce', action='store_true')
-    parser.add_argument('--optim', default='adam', help='optimizer type')
+    parser.add_argument('--optim', default='adagrad', help='optimizer type')
     parser.add_argument('--para_print', action='store_true')
     parser.add_argument(
         "--learning_rate",
         type=float,
-        default=0.001,
+        default=0.2,
         help="Learning rate used to train the model. (default: %(default)f)")
     parser.add_argument(
         "--log_interval",
         type=int,
-        default=50,
+        default=100,
         help="log the train loss every n batches."
         "(default: %(default)d)")
     parser.add_argument(
         "--dev_interval",
         type=int,
-        default=1000,
+        default=10000,
         help="cal dev loss every n batches."
         "(default: %(default)d)")
-    parser.add_argument('--dropout', type=float, default=0.0)
-    parser.add_argument('--max_grad_norm', type=float, default=5.0)
+    parser.add_argument('--dropout', type=float, default=0.1)
+    parser.add_argument('--max_grad_norm', type=float, default=10.0)
     parser.add_argument('--max_epoch', type=float, default=10)
     parser.add_argument('--debug', type=bool, default=False)
     parser.add_argument('--para_load_dir', type=str, default='')
     parser.add_argument('--para_save_dir', type=str, default='')
     parser.add_argument('--train_path', type=str, default='')
+    parser.add_argument('--test_path', type=str, default='')
     parser.add_argument('--detail', action='store_true')
     parser.add_argument('--random_seed', type=int, default=123)
     args = parser.parse_args()

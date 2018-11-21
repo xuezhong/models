@@ -51,21 +51,21 @@ import collections
 
 name_dict = collections.OrderedDict()
 name_dict['embedding_para'] = 1
-'''
+#'''
 name_dict['lstmp_0.b_0'] = 21
-name_dict['layer1_fw_gate_w'] = 22
+name_dict['fw_layer1_gate_w'] = 22
 name_dict['lstmp_0.w_0'] = 22
 name_dict['lstmp_0.w_1'] = 23
 name_dict['lstmp_1.b_0'] = 31
-name_dict['layer1_bw_gate_w'] = 32
+name_dict['bw_layer1_gate_w'] = 32
 name_dict['lstmp_1.w_0'] = 32
 name_dict['lstmp_1.w_1'] = 33
 name_dict['lstmp_2.b_0'] = 41
-name_dict['layer2_fw_gate_w'] = 42
+name_dict['fw_layer2_gate_w'] = 42
 name_dict['lstmp_2.w_0'] = 42
 name_dict['lstmp_2.w_1'] = 43
 name_dict['lstmp_3.b_0'] = 51
-name_dict['layer2_bw_gate_w'] = 52
+name_dict['bw_layer2_gate_w'] = 52
 name_dict['lstmp_3.w_0'] = 52
 name_dict['lstmp_3.w_1'] = 53
 #'''
@@ -379,8 +379,7 @@ def eval(dev_data, inference_program, feed_order, dev_count, loss, place,
         for var_name in feed_order
     ]
     val_feeder = fluid.DataFeeder(val_feed_list, place)
-    dev_data_iter = reader.get_data_iter(dev_data, args.batch_size,
-                                         args.num_steps)
+    dev_data_iter = lambda: dev_data.iter_batches(args.batch_size, args.num_steps)
     dev_reader = read_multiple(dev_data_iter, dev_count)
 
     for batch_id, batch_list in enumerate(dev_reader(), 1):
@@ -434,8 +433,11 @@ def train():
     logger.info("begin to load data")
     vocab = data.Vocabulary(args.vocab_path, validate_file=True)
     vocab_size = vocab.size
-    raw_data = data.BidirectionalLMDataset(
+    train_data = data.BidirectionalLMDataset(
         args.train_path, vocab, test=False, shuffle_on_load=False)
+    valid_data = data.BidirectionalLMDataset(
+        args.test_path, vocab, test=False, shuffle_on_load=False)
+
     logger.info("finished load data")
 
     logger.info('Initialize the model...')
@@ -471,7 +473,10 @@ def train():
                     clip_norm=args.max_grad_norm))
 
             # build optimizer
-            if args.optim == 'sgd':
+            if args.optim == 'adagrad':
+                optimizer = fluid.optimizer.Adagrad(
+                    learning_rate=args.learning_rate)
+            elif args.optim == 'sgd':
                 optimizer = fluid.optimizer.SGD(
                     learning_rate=args.learning_rate)
             elif args.optim == 'adam':
@@ -520,7 +525,7 @@ def train():
             for epoch_id in range(args.max_epoch):
                 start_time = time.time()
                 logger.info("epoch id {}".format(epoch_id))
-                train_data_iter = lambda: raw_data.iter_batches(batch_size, args.num_steps)
+                train_data_iter = lambda: train_data.iter_batches(batch_size, args.num_steps)
                 train_reader = read_multiple(train_data_iter, dev_count)
 
                 total_loss = 0
