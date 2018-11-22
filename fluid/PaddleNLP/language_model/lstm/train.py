@@ -231,6 +231,13 @@ def debug_init(train_prog, vars, vars_name):
         if train_prog.block(0).has_var(name[0]):
             train_prog.block(0).var(name[0]).persistable = True
 
+    param_list = train_prog.block(0).all_parameters()
+    param_name_list = [p.name for p in param_list]
+    for p_name in param_name_list:
+        p_name = p_name + '@GRAD'
+        if train_prog.block(0).has_var(p_name):
+            train_prog.block(0).var(p_name).persistable = True
+
 
 def debug_print(train_exe, logger, args):
     if not args.para_print:
@@ -263,6 +270,23 @@ def print_para(train_prog, train_exe, logger, args):
     param_list = train_prog.block(0).all_parameters()
     param_name_list = [p.name for p in param_list]
     num_sum = 0
+    for p_name in param_name_list:
+        p_name = p_name + '@GRAD'
+        if not train_exe.scope.find_var(p_name):
+            logger.info("grad para: {0} not find".format(p_name))
+            continue
+        try:
+            p_array = np.array(train_exe.scope.find_var(p_name).get_tensor())
+        except:
+            logger.info("grad para: {0} failed".format(p_name))
+            continue
+        slots = name2slot(p_name)
+        if slots:
+            update_slot(slots, p_array)
+        param_num = np.prod(p_array.shape)
+        num_sum = num_sum + param_num
+        var_print('grad para', p_array, p_name, p_name, args.detail, logger)
+
     for p_name in param_name_list:
         p_array = np.array(train_exe.scope.find_var(p_name).get_tensor())
         slots = name2slot(p_name)
@@ -467,15 +491,16 @@ def train():
                 init_scale=args.init_scale,
                 args=args)
             inference_program = main_program.clone(for_test=True)
-
+            '''
             fluid.clip.set_gradient_clip(
                 clip=fluid.clip.GradientClipByGlobalNorm(
                     clip_norm=args.max_grad_norm))
+            '''
 
             # build optimizer
             if args.optim == 'adagrad':
                 optimizer = fluid.optimizer.Adagrad(
-                    learning_rate=args.learning_rate)
+                    learning_rate=args.learning_rate, epsilon=1.0e-6)
             elif args.optim == 'sgd':
                 optimizer = fluid.optimizer.SGD(
                     learning_rate=args.learning_rate)
@@ -512,6 +537,8 @@ def train():
             if args.para_print:
                 exe_strategy.num_threads = 1
                 debug_init(main_program, grad_vars, grad_vars_name)
+                with open("program.desc", 'w') as f:
+                    print(str(framework.default_main_program()), file=f)
             parallel_executor = fluid.ParallelExecutor(
                 main_program=main_program,
                 use_cuda=bool(args.use_gpu),
