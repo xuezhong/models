@@ -396,6 +396,7 @@ def eval(dev_data, inference_program, feed_order, dev_count, loss, place,
 
     # Use test set as validation each pass
     total_loss = 0.0
+    total_cnt = 0
     n_batch_cnt = 0
     n_batch_loss = 0.0
     val_feed_list = [
@@ -415,6 +416,7 @@ def eval(dev_data, inference_program, feed_order, dev_count, loss, place,
         total_loss += np.array(val_fetch_outs[0]).sum()
 
         n_batch_cnt += len(np.array(val_fetch_outs[0]))
+        total_cnt += len(np.array(val_fetch_outs[0]))
         n_batch_loss += np.array(val_fetch_outs[0]).sum()
         log_every_n_batch = args.log_interval
         if log_every_n_batch > 0 and batch_id % log_every_n_batch == 0:
@@ -425,7 +427,7 @@ def eval(dev_data, inference_program, feed_order, dev_count, loss, place,
             n_batch_cnt = 0
         batch_offset = 0
 
-    ppl = np.exp(total_loss / n_batch_cnt)
+    ppl = np.exp(total_loss / total_cnt)
     return ppl
 
 
@@ -460,7 +462,7 @@ def train():
     train_data = data.BidirectionalLMDataset(
         args.train_path, vocab, test=False, shuffle_on_load=False)
     valid_data = data.BidirectionalLMDataset(
-        args.test_path, vocab, test=False, shuffle_on_load=False)
+        args.test_path, vocab, test=True, shuffle_on_load=False)
 
     logger.info("finished load data")
 
