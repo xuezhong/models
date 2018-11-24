@@ -389,8 +389,8 @@ def prepare_input(batch, epoch_id=0, with_lr=True):
     return inst
 
 
-def eval(dev_data, inference_program, feed_order, dev_count, loss, place,
-         logger, args):
+def eval(vocab, inference_program, feed_order, dev_count, loss, place, logger,
+         args):
     parallel_executor = fluid.ParallelExecutor(
         main_program=inference_program, use_cuda=bool(args.use_gpu))
 
@@ -404,6 +404,8 @@ def eval(dev_data, inference_program, feed_order, dev_count, loss, place,
         for var_name in feed_order
     ]
     val_feeder = fluid.DataFeeder(val_feed_list, place)
+    dev_data = data.BidirectionalLMDataset(
+        args.test_path, vocab, test=True, shuffle_on_load=False)
     dev_data_iter = lambda: dev_data.iter_batches(args.batch_size, args.num_steps)
     dev_reader = read_multiple(dev_data_iter, dev_count)
 
@@ -461,8 +463,6 @@ def train():
     vocab_size = vocab.size
     train_data = data.BidirectionalLMDataset(
         args.train_path, vocab, test=False, shuffle_on_load=False)
-    valid_data = data.BidirectionalLMDataset(
-        args.test_path, vocab, test=True, shuffle_on_load=False)
 
     logger.info("finished load data")
 
@@ -577,9 +577,8 @@ def train():
                         ppl = np.exp(total_loss / total_num)
                         logger.info("ppl {} {} ".format(batch_id, ppl))
                     if batch_id > 0 and batch_id % args.dev_interval == 0:
-                        valid_ppl = eval(valid_data, inference_program,
-                                         feed_order, dev_count, loss, place,
-                                         logger, args)
+                        valid_ppl = eval(vocab, inference_program, feed_order,
+                                         dev_count, loss, place, logger, args)
                         logger.info("valid ppl {}".format(valid_ppl))
                     if args.detail and batch_id > 10:
                         exit()
@@ -598,10 +597,10 @@ def train():
                     os.makedirs(model_path)
                 fluid.io.save_persistables(
                     executor=exe, dirname=model_path, main_program=main_program)
-                valid_ppl = eval(valid_data, inference_program, feed_order,
+                valid_ppl = eval(vocab, inference_program, feed_order,
                                  dev_count, loss, place, logger, args)
                 logger.info("valid ppl {}".format(valid_ppl))
-            test_ppl = eval(test_data, inference_program, feed_order, dev_count,
+            test_ppl = eval(vocab, inference_program, feed_order, dev_count,
                             loss, place, logger, args)
             logger.info("test ppl {}".format(test_ppl))
 
