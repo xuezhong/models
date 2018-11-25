@@ -82,6 +82,12 @@ def parse_args():
         help="log the train loss every n batches."
         "(default: %(default)d)")
     parser.add_argument(
+        "--save_interval",
+        type=int,
+        default=2000,
+        help="log the train loss every n batches."
+        "(default: %(default)d)")
+    parser.add_argument(
         "--dev_interval",
         type=int,
         default=10000,

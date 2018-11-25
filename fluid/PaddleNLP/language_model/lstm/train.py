@@ -580,6 +580,15 @@ def train():
                         valid_ppl = eval(vocab, inference_program, feed_order,
                                          dev_count, loss, place, logger, args)
                         logger.info("valid ppl {}".format(valid_ppl))
+                    if batch_id > 0 and batch_id % args.save_interval == 0:
+                        model_path = os.path.join("model_new/",
+                                                  str(batch_id + epoch_id))
+                        if not os.path.isdir(model_path):
+                            os.makedirs(model_path)
+                        fluid.io.save_persistables(
+                            executor=exe,
+                            dirname=model_path,
+                            main_program=main_program)
                     if args.detail and batch_id > 10:
                         exit()
 
