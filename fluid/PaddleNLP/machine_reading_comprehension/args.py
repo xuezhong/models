@@ -107,6 +107,7 @@ def parse_args():
     parser.add_argument('--max_q_len', type=int, default=9)
     parser.add_argument('--doc_num', type=int, default=5)
     parser.add_argument('--para_print', action='store_true')
+    parser.add_argument('--debug', action='store_true')
     parser.add_argument('--drop_rate', type=float, default=0.0)
     parser.add_argument('--random_seed', type=int, default=123)
     parser.add_argument(
