@@ -124,11 +124,38 @@ def attn_flow(q_enc, p_enc, p_ids_name, args):
     return dropout(g, args)
 
 
-def self_attn(p_enc, p_ids_name, args):
+def self_attn(p_enc, size, p_ids_name, args):
+    def linear(inputs, para_name, out_size):
+        return layers.fc(input=inputs,
+                         size=out_size,
+                         param_attr=fluid.ParamAttr(name=para_name + '_w'),
+                         bias_attr=None)
+
     tag = p_ids_name + "::"
-    sim_matrix = layers.matmul(p_enc, p_enc, transpose_y=True)
+    p_vec = layers.fc(input=inputs,
+                      size=size,
+                      param_attr=fluid.ParamAttr(name=tag + '_w'),
+                      bias_attr=fluid.ParamAttr(name=tag + '_b'),
+                      act='relu')
+    m = bi_lstm_encoder(
+        input_seq=p_vec,
+        gate_size=args.hidden_size,
+        para_name='self_attn',
+        args=args)
+
+    m1 = linear(m, tag + 'p', 1)
+    m2 = linear(m, tag + 'q', 1)
+    m3 = linear(layers.elementwise(m, m, transpose_y=True), tag + 'p_q', 1)
+
+    sim_matrix = layers.matmul(p_vec, p_vec, transpose_y=True)
     sim_matrix = layers.softmax(sim_matrix)
     self_attn = layers.matmul(sim_matrix, p_enc)
+
+    self_attn = layers.fc(input=self_attn,
+                          size=size,
+                          param_attr=fluid.ParamAttr(name=tag + '_w'),
+                          bias_attr=fluid.ParamAttr(name=tag + '_b'),
+                          act='relu')
 
     return dropout(self_attn, args)
 
@@ -305,7 +332,7 @@ def rc_model(hidden_size, vocab, args):
 
         pad_value = fluid.layers.assign(input=np.array([0]).astype("float32"))
         g_i2, lens = layers.sequence_pad(x=g_i, pad_value=pad_value)
-        g_i3 = self_attn(g_i2, p_ids_name, args)
+        g_i3 = self_attn(g_i2, hidden_size, p_ids_name, args)
         g_i4 = layers.sequence_unpad(x=g_i3, length=lens)
 
         if args.debug:
