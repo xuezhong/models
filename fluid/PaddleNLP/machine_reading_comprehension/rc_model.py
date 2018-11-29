@@ -279,6 +279,15 @@ def fusion(g, para_name, args):
     return dropout(m, args)
 
 
+def linear_fuse(inputs, size, para_name, args):
+    fc = layers.fc(input=inputs,
+                   size=size,
+                   param_attr=fluid.ParamAttr(name=para_name + '_w'),
+                   bias_attr=fluid.ParamAttr(name=para_name + '_b'),
+                   act='relu')
+    return fc
+
+
 def rc_model(hidden_size, vocab, args):
     emb_shape = [vocab.size(), vocab.embed_dim]
     start_labels = layers.data(
@@ -306,16 +315,18 @@ def rc_model(hidden_size, vocab, args):
 
         # stage 2:match
         g_i = attn_flow(q_enc, p_enc, p_ids_name, args)
+        g_i0 = linear_fuse(g_i, args.hidden_size, 'linear_fuse0', args)
 
         # stage 3:fusion
-        m_i = fusion(g_i, 'fusion0', args)
+        m_i = fusion(g_i0, 'fusion0', args)
 
         # self_attention
         pad_value = fluid.layers.assign(input=np.array([0]).astype("float32"))
         g_i2, lens = layers.sequence_pad(x=m_i, pad_value=pad_value)
         g_i3 = self_attn(g_i2, p_ids_name, args)
         g_i4 = layers.sequence_unpad(x=g_i3, length=lens)
-        g_i5 = fusion(g_i4, 'fusion1', args)
+        g_i5 = linear_fuse(g_i4, args.hidden_size, 'linear_fuse1', args)
+        g_i6 = g_i5 + g_i0
 
         if args.debug:
             layers.Print(p_enc, message='p_enc', summarize=10)
@@ -324,8 +335,7 @@ def rc_model(hidden_size, vocab, args):
             layers.Print(lens, message='g_i2_len', summarize=10)
             layers.Print(g_i3, message='g_i3', summarize=10)
             layers.Print(g_i4, message='g_i4', summarize=10)
-        # stage 3:fusion
-        drnn.output(g_i5, q_enc)
+        drnn.output(g_i6, q_enc)
 
     ms, q_encs = drnn()
     p_vec = layers.lod_reset(x=ms, y=start_labels)
