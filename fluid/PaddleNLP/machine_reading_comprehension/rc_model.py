@@ -128,9 +128,14 @@ def self_attn(p_enc, p_ids_name, args):
     tag = p_ids_name + "::"
     sim_matrix = layers.matmul(p_enc, p_enc, transpose_y=True)
     sim_matrix = layers.softmax(sim_matrix)
-    self_attn = layers.matmul(sim_matrix, p_enc)
+    H_expr = layers.matmul(sim_matrix, p_enc)
 
-    return dropout(self_attn, args)
+    h_h = layers.elementwise_mul(x=p_enc, y=H_expr, axis=0)
+
+    g = layers.concat(input=[p_enc, h_h, H_expr], axis=1)
+    #g = layers.lod_reset(x=g, y=p_enc)
+
+    return dropout(g, args)
 
 
 def lstm_step(x_t, hidden_t_prev, cell_t_prev, size, para_name, args):
@@ -268,9 +273,9 @@ def point_network_decoder(p_vec, q_vec, hidden_size, args):
     return start_prob, end_prob
 
 
-def fusion(g, args):
+def fusion(g, para_name, args):
     m = bi_lstm_encoder(
-        input_seq=g, gate_size=args.hidden_size, para_name='fusion', args=args)
+        input_seq=g, gate_size=args.hidden_size, para_name=para_name, args=args)
     return dropout(m, args)
 
 
@@ -301,12 +306,16 @@ def rc_model(hidden_size, vocab, args):
 
         # stage 2:match
         g_i = attn_flow(q_enc, p_enc, p_ids_name, args)
-        # self_attention
 
+        # stage 3:fusion
+        m_i = fusion(g_i, 'fusion0', args)
+
+        # self_attention
         pad_value = fluid.layers.assign(input=np.array([0]).astype("float32"))
-        g_i2, lens = layers.sequence_pad(x=g_i, pad_value=pad_value)
+        g_i2, lens = layers.sequence_pad(x=m_i, pad_value=pad_value)
         g_i3 = self_attn(g_i2, p_ids_name, args)
         g_i4 = layers.sequence_unpad(x=g_i3, length=lens)
+        g_i5 = fusion(g_i4, 'fusion1', args)
 
         if args.debug:
             layers.Print(p_enc, message='p_enc', summarize=10)
@@ -316,8 +325,7 @@ def rc_model(hidden_size, vocab, args):
             layers.Print(g_i3, message='g_i3', summarize=10)
             layers.Print(g_i4, message='g_i4', summarize=10)
         # stage 3:fusion
-        m_i = fusion(g_i4, args)
-        drnn.output(m_i, q_enc)
+        drnn.output(g_i5, q_enc)
 
     ms, q_encs = drnn()
     p_vec = layers.lod_reset(x=ms, y=start_labels)
