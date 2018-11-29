@@ -56,14 +56,17 @@ name_dict['lstmp_0.b_0'] = 21
 name_dict['fw_layer1_gate_w'] = 22
 name_dict['lstmp_0.w_0'] = 22
 name_dict['lstmp_0.w_1'] = 23
+
 name_dict['lstmp_1.b_0'] = 31
-name_dict['bw_layer1_gate_w'] = 32
+name_dict['fw_layer2_gate_w'] = 32
 name_dict['lstmp_1.w_0'] = 32
 name_dict['lstmp_1.w_1'] = 33
+
 name_dict['lstmp_2.b_0'] = 41
-name_dict['fw_layer2_gate_w'] = 42
+name_dict['bw_layer1_gate_w'] = 42
 name_dict['lstmp_2.w_0'] = 42
 name_dict['lstmp_2.w_1'] = 43
+
 name_dict['lstmp_3.b_0'] = 51
 name_dict['bw_layer2_gate_w'] = 52
 name_dict['lstmp_3.w_0'] = 52
@@ -280,11 +283,7 @@ def print_para(train_prog, train_exe, logger, args):
         except:
             logger.info("grad para: {0} failed".format(p_name))
             continue
-        slots = name2slot(p_name)
-        if slots:
-            update_slot(slots, p_array)
         param_num = np.prod(p_array.shape)
-        num_sum = num_sum + param_num
         var_print('grad para', p_array, p_name, p_name, args.detail, logger)
 
     for p_name in param_name_list:
@@ -502,7 +501,7 @@ def train():
             # build optimizer
             if args.optim == 'adagrad':
                 optimizer = fluid.optimizer.Adagrad(
-                    learning_rate=args.learning_rate, epsilon=1.0e-6)
+                    learning_rate=args.learning_rate, epsilon=1.0e-100)
             elif args.optim == 'sgd':
                 optimizer = fluid.optimizer.SGD(
                     learning_rate=args.learning_rate)
@@ -515,7 +514,7 @@ def train():
             else:
                 logger.error('Unsupported optimizer: {}'.format(args.optim))
                 exit(-1)
-            optimizer.minimize(loss)
+            optimizer.minimize(loss*args.num_steps)
 
             # initialize parameters
             place = core.CUDAPlace(0) if args.use_gpu else core.CPUPlace()
@@ -589,7 +588,7 @@ def train():
                             executor=exe,
                             dirname=model_path,
                             main_program=main_program)
-                    if args.detail and batch_id > 10:
+                    if args.detail and batch_id > 100:
                         exit()
 
                 end_time = time.time()

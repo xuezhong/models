@@ -125,10 +125,14 @@ def lm_model(hidden_size,
         layers.Print(x_emb, summarize=10)
         layers.Print(projection, summarize=10)
         layers.Print(loss, summarize=10)
-    grad_vars = [x_f, y_f, x_b, y_b] + forward + backward
-    grad_vars_name = [
-        'x', 'y', 'x_r', 'y_r', 'x_emb', 'rnn_out', 'rnn_out2', 'proj', 'loss',
-        'x_emb_r', 'rnn_out_r', 'rnn_out2_r', 'proj_r', 'loss_r'
-    ]
+    grad_vars = [x_f, y_f, x_b, y_b]
+    grad_vars_name = ['x', 'y', 'x_r', 'y_r'] 
+    fw_vars_name=['x_emb', 'rnn_out', 'rnn_out2', 'proj', 'loss']
+    bw_vars_name=['x_emb_r', 'rnn_out_r', 'rnn_out2_r', 'proj_r', 'loss_r']
+    for i in range(len(forward)):
+        grad_vars.append(forward[i])
+        grad_vars.append(backward[i])
+        grad_vars_name.append(fw_vars_name[i])
+        grad_vars_name.append(bw_vars_name[i])
     feeding_list = ['x', 'y', 'x_r', 'y_r']
     return loss, feeding_list, grad_vars, grad_vars_name
