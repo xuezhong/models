@@ -318,7 +318,8 @@ def rc_model(hidden_size, vocab, args):
         g_i0 = linear_fuse(g_i, args.hidden_size, 'linear_fuse0', args)
 
         # stage 3:fusion
-        m_i = fusion(g_i0, 'fusion0', args)
+        #m_i = fusion(g_i0, 'fusion0', args)
+        m_i = g_i0
 
         # self_attention
         pad_value = fluid.layers.assign(input=np.array([0]).astype("float32"))
