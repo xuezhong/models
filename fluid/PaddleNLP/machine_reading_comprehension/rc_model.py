@@ -288,6 +288,57 @@ def linear_fuse(inputs, size, para_name, args):
     return fc
 
 
+def my_linear(x, size, para_name):
+    weight = layers.create_parameter(
+        [x.shape[-1], size], dtype="float32", name=para_name)
+    projection = layers.matmul(x, weight)
+    return projection
+
+
+INF = 1e30
+
+
+def softmax_mask(val, mask):
+    return -INF * (1 - mask) + val
+
+
+def dot_attention(p_enc, q_enc, p_len, q_len, max_p_len, max_q_len, hidden,
+                  para_name, args):
+    q_enc_ = dropout(q_enc, args)
+    p_enc_ = dropout(p_enc, args)
+    q_enc_ = layers.relu(my_linear(q_enc_, hidden, para_name + '_q_enc_w'))
+    p_enc_ = layers.relu(my_linear(p_enc_, hidden, para_name + '_p_enc_w'))
+    sim_matrix = layers.matmul(p_enc_, q_enc_, transpose_y=True)
+    sim_matrix = layers.scale(x=sim_matrix, scale=hidden**-0.5)
+
+    p_mask = layers.sequence_mask(p_len, max_p_len, dtype='float32')
+    p_mask = layers.transpose(p_mask, perm=[0, 2, 1])
+    q_mask = layers.sequence_mask(q_len, max_q_len, dtype='float32')
+    q_mask = layers.transpose(q_mask, perm=[0, 2, 1])
+
+    sim_mask = layers.matmul(p_mask, q_mask, transpose_y=True)
+    sim_matrix = softmax_mask(sim_matrix, sim_mask)
+    sim_matrix = layers.softmax(sim_matrix)
+    H_expr = layers.matmul(sim_matrix, q_enc_)
+
+    res = layers.concat(input=[p_enc, H_expr], axis=2)
+
+    dim = res.shape[-1]
+    res = dropout(res, args)
+    gate = layers.sigmoid(my_linear(res, dim, para_name + '_gate_w'))
+    if args.debug:
+        layers.Print(p_len, message='p_len', summarize=10)
+        layers.Print(p_enc, message='p_enc', summarize=10)
+        layers.Print(p_enc_, message='p_enc_', summarize=10)
+        layers.Print(sim_matrix, message='sim_matrix', summarize=1000)
+        layers.Print(sim_mask, message='sim_mask', summarize=1000)
+        layers.Print(H_expr, message='H_expr', summarize=10)
+        layers.Print(res, message='res', summarize=10)
+        layers.Print(gate, message='gate', summarize=10)
+
+    return res * gate
+
+
 def rc_model(hidden_size, vocab, args):
     emb_shape = [vocab.size(), vocab.embed_dim]
     start_labels = layers.data(
@@ -313,25 +364,26 @@ def rc_model(hidden_size, vocab, args):
         p_enc = encoder(p_emb, 'p_enc', hidden_size, args)
         q_enc = encoder(q_emb, 'q_enc', hidden_size, args)
 
-        # stage 2:match
-        g_i = attn_flow(q_enc, p_enc, p_ids_name, args)
-        g_i0 = linear_fuse(g_i, args.hidden_size, 'linear_fuse0', args)
+        # stage 2:attention
+        g_i0 = attn_flow(q_enc, p_enc, p_ids_name, args)
 
-        # stage 3:fusion
-        #m_i = fusion(g_i0, 'fusion0', args)
-        m_i = g_i0
+        # stage 3:match
+        g_i1 = fusion(g_i0, 'fusion0', args)
 
         # self_attention
         pad_value = fluid.layers.assign(input=np.array([0]).astype("float32"))
-        g_i2, lens = layers.sequence_pad(x=m_i, pad_value=pad_value)
-        g_i3 = self_attn(g_i2, p_ids_name, args)
+        g_i2, lens = layers.sequence_pad(
+            x=g_i1, pad_value=pad_value, maxlen=args.max_p_len)
+        g_i3 = dot_attention(g_i2, g_i2, lens, lens, args.max_p_len,
+                             args.max_p_len, hidden_size, 'self_attntion', args)
         g_i4 = layers.sequence_unpad(x=g_i3, length=lens)
-        g_i5 = linear_fuse(g_i4, args.hidden_size, 'linear_fuse1', args)
-        g_i6 = g_i5 + g_i0
+        #g_i5 = linear_fuse(g_i4, args.hidden_size, 'linear_fuse1', args)
+        g_i5 = fusion(g_i4, 'fusion1', args)
+        g_i6 = g_i5 + g_i1
 
         if args.debug:
             layers.Print(p_enc, message='p_enc', summarize=10)
-            layers.Print(g_i, message='g_i', summarize=10)
+            layers.Print(g_i0, message='g_i0', summarize=10)
             layers.Print(g_i2, message='g_i2', summarize=10)
             layers.Print(lens, message='g_i2_len', summarize=10)
             layers.Print(g_i3, message='g_i3', summarize=10)
