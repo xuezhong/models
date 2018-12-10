@@ -114,7 +114,7 @@ def update_slot(slots, p_array):
 def record_slot(logger):
     for slot in slot_dict:
         logger.info("slot:" + "\t".join(
-            [str(x) for x in [slot] + slot_dict[slot]]))
+            [str(round(x, 10)) for x in [slot] + slot_dict[slot]]))
 
 
 def var_print(tag, p_array, p_name, name, detail, logger):
@@ -277,10 +277,12 @@ def print_para(train_prog, train_exe, logger, args):
         p_name = p_name + '@GRAD'
         if not train_exe.scope.find_var(p_name):
             logger.info("grad para: {0} not find".format(p_name))
+            #import pdb; pdb.set_trace()
             continue
         try:
             p_array = np.array(train_exe.scope.find_var(p_name).get_tensor())
         except:
+            #import pdb; pdb.set_trace()
             logger.info("grad para: {0} failed".format(p_name))
             continue
         param_num = np.prod(p_array.shape)
@@ -469,6 +471,7 @@ def train():
 
     if not args.use_gpu:
         place = fluid.CPUPlace()
+        import multiprocessing
         dev_count = int(os.environ.get('CPU_NUM', multiprocessing.cpu_count()))
     else:
         place = fluid.CUDAPlace(0)
@@ -483,7 +486,7 @@ def train():
     with fluid.program_guard(main_program, startup_prog):
         with fluid.unique_name.guard():
             # Training process
-            loss, feed_order, grad_vars, grad_vars_name = lm_model.lm_model(
+            loss, last_hidden, last_cell, feed_order, grad_vars, grad_vars_name = lm_model.lm_model(
                 hidden_size,
                 vocab_size,
                 batch_size,
@@ -559,22 +562,49 @@ def train():
                 total_loss = 0
                 total_num = 0
                 n_batch_loss = 0.0
+                n_batch_cnt = 0
+		last_hidden_values = np.zeros(
+		    (dev_count, args.num_layers * 2 * batch_size * args.embed_size), dtype='float32')
+		last_cell_values = np.zeros(
+		    (dev_count, args.num_layers * 2 * batch_size * hidden_size), dtype='float32')
                 for batch_id, batch_list in enumerate(train_reader(), 1):
                     feed_data = batch_reader(batch_list, args)
+                    feed=list(feeder.feed_parallel(feed_data, dev_count))
+                    for i in range(dev_count):
+                        init_hidden_tensor = fluid.core.LoDTensor()
+                        if args.use_gpu:
+                            placex=fluid.CUDAPlace(i)
+                        else:
+                            placex=fluid.CPUPlace()
+                        init_hidden_tensor.set(last_hidden_values[i], placex)
+                        init_cell_tensor = fluid.core.LoDTensor()
+                        init_cell_tensor.set(last_cell_values[i], placex)
+
+                        feed[i]['init_hiddens'] = init_hidden_tensor
+                        feed[i]['init_cells'] = init_cell_tensor
+                       
                     fetch_outs = parallel_executor.run(
-                        feed=list(feeder.feed_parallel(feed_data, dev_count)),
-                        fetch_list=[loss.name],
+                        feed=feed,
+                        fetch_list=[loss.name, last_hidden.name, last_cell.name],
                         return_numpy=False)
                     cost_train = np.array(fetch_outs[0]).mean()
+                    last_hidden_values = np.array(fetch_outs[1])
+                    last_hidden_values = last_hidden_values.reshape((dev_count, args.num_layers * 2 * batch_size * args.embed_size))
+                    last_cell_values = np.array(fetch_outs[2])
+                    last_cell_values = last_cell_values.reshape((dev_count, args.num_layers * 2 * batch_size * args.hidden_size))
+
                     total_num += args.batch_size * dev_count
-                    n_batch_loss += cost_train
+                    n_batch_loss += np.array(fetch_outs[0]).sum()
+                    n_batch_cnt += len(np.array(fetch_outs[0]))
                     total_loss += cost_train * args.batch_size * dev_count
 
                     if batch_id > 0 and batch_id % log_interval == 0:
                         print_para(main_program, parallel_executor, logger,
                                    args)
-                        ppl = np.exp(total_loss / total_num)
-                        logger.info("ppl {} {} ".format(batch_id, ppl))
+                        ppl = np.exp(n_batch_loss / n_batch_cnt)
+                        logger.info("ppl from {} to {} is {} ".format(batch_id - log_interval, batch_id, ppl))
+                        n_batch_loss = 0.0
+                        n_batch_cnt = 0
                     if batch_id > 0 and batch_id % args.dev_interval == 0:
                         valid_ppl = eval(vocab, inference_program, feed_order,
                                          dev_count, loss, place, logger, args)
