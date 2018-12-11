@@ -265,7 +265,7 @@ def debug_print(train_exe, logger, args):
         var_print('grad', p_array, p_name, name, args.detail, logger)
 
 
-def print_para(train_prog, train_exe, logger, args):
+def print_para(train_prog, train_exe, logger, optimizer=None, args=None):
     if not args.para_print:
         return
     debug_print(train_exe, logger, args)
@@ -287,6 +287,14 @@ def print_para(train_prog, train_exe, logger, args):
             continue
         param_num = np.prod(p_array.shape)
         var_print('grad para', p_array, p_name, p_name, args.detail, logger)
+
+    if optimizer:    
+        for p_name in param_name_list:
+            acc_str='moment'
+            acc = optimizer._accumulators[acc_str][p_name]
+            p_array = np.array(train_exe.scope.find_var(acc.name).get_tensor())
+            var_print(acc_str, p_array, p_name, acc.name, args.detail, logger)
+
 
     for p_name in param_name_list:
         p_array = np.array(train_exe.scope.find_var(p_name).get_tensor())
@@ -504,7 +512,7 @@ def train():
             # build optimizer
             if args.optim == 'adagrad':
                 optimizer = fluid.optimizer.Adagrad(
-                    learning_rate=args.learning_rate, epsilon=1.0e-100)
+                    learning_rate=args.learning_rate, epsilon=0.0, initial_accumulator_value=1.0)
             elif args.optim == 'sgd':
                 optimizer = fluid.optimizer.SGD(
                     learning_rate=args.learning_rate)
@@ -548,7 +556,7 @@ def train():
                 use_cuda=bool(args.use_gpu),
                 exec_strategy=exe_strategy)
             load_params(main_program, parallel_executor, place, logger, args)
-            print_para(main_program, parallel_executor, logger, args)
+            print_para(main_program, parallel_executor, logger, optimizer, args)
 
             # get train epoch size
             log_interval = args.log_interval
@@ -600,7 +608,7 @@ def train():
 
                     if batch_id > 0 and batch_id % log_interval == 0:
                         print_para(main_program, parallel_executor, logger,
-                                   args)
+                                   optimizer, args)
                         ppl = np.exp(n_batch_loss / n_batch_cnt)
                         logger.info("ppl from {} to {} is {} ".format(batch_id - log_interval, batch_id, ppl))
                         n_batch_loss = 0.0
