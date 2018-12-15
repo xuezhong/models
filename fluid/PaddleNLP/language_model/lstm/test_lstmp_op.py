@@ -245,7 +245,7 @@ class TestLstmpOp(LstmTest.TestLstmOp):
             ['Input', 'Weight', 'ProjWeight', 'Bias'], ['Projection'],
             max_relative_error=1e-2)
     #'''
-'''
+#'''
 class TestLstmpOpHasInitial(TestLstmpOp):
     def reset_argument(self):
         self.has_initial_state = True
@@ -349,7 +349,7 @@ class TestLstmpOpNotUsePeepholes(TestLstmpOp):
 class TestLstmpOpLinearProjection(TestLstmpOp):
     def reset_argument(self):
         self.act_proj = 'identity'
-'''
+#'''
 
 if __name__ == '__main__':
     unittest.main()

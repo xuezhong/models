@@ -503,11 +503,9 @@ def train():
                 init_scale=args.init_scale,
                 args=args)
             inference_program = main_program.clone(for_test=True)
-            '''
             fluid.clip.set_gradient_clip(
                 clip=fluid.clip.GradientClipByGlobalNorm(
                     clip_norm=args.max_grad_norm))
-            '''
 
             # build optimizer
             if args.optim == 'adagrad':
