@@ -95,6 +95,8 @@ def parse_args():
         "(default: %(default)d)")
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--max_grad_norm', type=float, default=10.0)
+    parser.add_argument('--proj_clip', type=float, default=3.0)
+    parser.add_argument('--cell_clip', type=float, default=3.0)
     parser.add_argument('--max_epoch', type=float, default=10)
     parser.add_argument('--debug', type=bool, default=False)
     parser.add_argument('--para_load_dir', type=str, default='')

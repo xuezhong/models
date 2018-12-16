@@ -62,6 +62,8 @@ def lstmp_encoder(input_seq, gate_size,  h_0, c_0, para_name, proj_size, args):
         h_0=h_0,
         c_0=c_0,
         use_peepholes=False,
+        proj_clip=args.proj_clip,
+        cell_clip=args.cell_clip,
         proj_activation="identity",
         param_attr=fluid.ParamAttr(initializer=init),
         bias_attr=fluid.ParamAttr(initializer=init_b))
