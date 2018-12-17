@@ -265,6 +265,19 @@ def debug_print(train_exe, logger, args):
         var_print('grad', p_array, p_name, name, args.detail, logger)
 
 
+def vars_print(logger, args, vars=None, grad_vars=None):
+    if not args.para_print:
+        return
+    for var, vname in zip(vars):
+        name, p_name = vname
+        p_array = np.array(var).astype('float64')
+        var_print('var', p_array, p_name, name, args.detail, logger)
+    for grad, gname in zip(grad_vars):
+        name, p_name = gname
+        p_array = np.array(grad).astype('float64')
+        var_print('grad', p_array, p_name, name, args.detail, logger)
+
+
 def print_para(train_prog, train_exe, logger, optimizer=None, args=None):
     if not args.para_print:
         return
@@ -288,13 +301,18 @@ def print_para(train_prog, train_exe, logger, optimizer=None, args=None):
         param_num = np.prod(p_array.shape)
         var_print('grad para', p_array, p_name, p_name, args.detail, logger)
 
-    if optimizer:    
+    if optimizer:
         for p_name in param_name_list:
-            acc_str='moment'
-            acc = optimizer._accumulators[acc_str][p_name]
-            p_array = np.array(train_exe.scope.find_var(acc.name).get_tensor())
-            var_print(acc_str, p_array, p_name, acc.name, args.detail, logger)
-
+            acc_str = 'moment'
+            try:
+                acc = optimizer._accumulators[acc_str][p_name]
+                p_array = np.array(
+                    train_exe.scope.find_var(acc.name).get_tensor())
+                var_print(acc_str, p_array, p_name, acc.name, args.detail,
+                          logger)
+            except:
+                logger.info("moment: {0} failed".format(p_name))
+                continue
 
     for p_name in param_name_list:
         p_array = np.array(train_exe.scope.find_var(p_name).get_tensor())
@@ -510,7 +528,9 @@ def train():
             # build optimizer
             if args.optim == 'adagrad':
                 optimizer = fluid.optimizer.Adagrad(
-                    learning_rate=args.learning_rate, epsilon=0.0, initial_accumulator_value=1.0)
+                    learning_rate=args.learning_rate,
+                    epsilon=0.0,
+                    initial_accumulator_value=1.0)
             elif args.optim == 'sgd':
                 optimizer = fluid.optimizer.SGD(
                     learning_rate=args.learning_rate)
@@ -523,7 +543,7 @@ def train():
             else:
                 logger.error('Unsupported optimizer: {}'.format(args.optim))
                 exit(-1)
-            optimizer.minimize(loss*args.num_steps)
+            optimizer.minimize(loss * args.num_steps)
 
             # initialize parameters
             place = core.CUDAPlace(0) if args.use_gpu else core.CPUPlace()
@@ -569,46 +589,63 @@ def train():
                 total_num = 0
                 n_batch_loss = 0.0
                 n_batch_cnt = 0
-		last_hidden_values = np.zeros(
-		    (dev_count, args.num_layers * 2 * batch_size * args.embed_size), dtype='float32')
-		last_cell_values = np.zeros(
-		    (dev_count, args.num_layers * 2 * batch_size * hidden_size), dtype='float32')
+                last_hidden_values = np.zeros(
+                    (dev_count,
+                     args.num_layers * 2 * batch_size * args.embed_size),
+                    dtype='float32')
+                last_cell_values = np.zeros(
+                    (dev_count, args.num_layers * 2 * batch_size * hidden_size),
+                    dtype='float32')
                 for batch_id, batch_list in enumerate(train_reader(), 1):
                     feed_data = batch_reader(batch_list, args)
-                    feed=list(feeder.feed_parallel(feed_data, dev_count))
+                    feed = list(feeder.feed_parallel(feed_data, dev_count))
                     for i in range(dev_count):
                         init_hidden_tensor = fluid.core.LoDTensor()
                         if args.use_gpu:
-                            placex=fluid.CUDAPlace(i)
+                            placex = fluid.CUDAPlace(i)
                         else:
-                            placex=fluid.CPUPlace()
+                            placex = fluid.CPUPlace()
                         init_hidden_tensor.set(last_hidden_values[i], placex)
                         init_cell_tensor = fluid.core.LoDTensor()
                         init_cell_tensor.set(last_cell_values[i], placex)
 
                         feed[i]['init_hiddens'] = init_hidden_tensor
                         feed[i]['init_cells'] = init_cell_tensor
-                       
+
                     fetch_outs = parallel_executor.run(
                         feed=feed,
-                        fetch_list=[loss.name, last_hidden.name, last_cell.name],
+                        fetch_list=[
+                            loss.name, last_hidden.name, last_cell.name
+                        ],  # + [x[0] for x in names] + [x[0] for x in grad_names],
                         return_numpy=False)
                     cost_train = np.array(fetch_outs[0]).mean()
                     last_hidden_values = np.array(fetch_outs[1])
-                    last_hidden_values = last_hidden_values.reshape((dev_count, args.num_layers * 2 * batch_size * args.embed_size))
+                    last_hidden_values = last_hidden_values.reshape(
+                        (dev_count,
+                         args.num_layers * 2 * batch_size * args.embed_size))
                     last_cell_values = np.array(fetch_outs[2])
-                    last_cell_values = last_cell_values.reshape((dev_count, args.num_layers * 2 * batch_size * args.hidden_size))
+                    last_cell_values = last_cell_values.reshape(
+                        (dev_count,
+                         args.num_layers * 2 * batch_size * args.hidden_size))
+
+                    #vars = fetch_outs[2:2+len(names)]
+                    #grad_vars = fetch_outs[2+len(names):]
 
                     total_num += args.batch_size * dev_count
                     n_batch_loss += np.array(fetch_outs[0]).sum()
+                    logger.info("n_batch_loss from {} to {} is {}, {} ".format(
+                        batch_id - log_interval, batch_id, n_batch_loss,
+                        np.array(fetch_outs[0]).sum()))
                     n_batch_cnt += len(np.array(fetch_outs[0]))
                     total_loss += cost_train * args.batch_size * dev_count
 
                     if batch_id > 0 and batch_id % log_interval == 0:
+                        #vars_print(logger, args, vars=(vars, names), grad_vars=(grad_vars, grad_names))
                         print_para(main_program, parallel_executor, logger,
                                    optimizer, args)
                         ppl = np.exp(n_batch_loss / n_batch_cnt)
-                        logger.info("ppl from {} to {} is {} ".format(batch_id - log_interval, batch_id, ppl))
+                        logger.info("ppl from {} to {} is {} ".format(
+                            batch_id - log_interval, batch_id, ppl))
                         n_batch_loss = 0.0
                         n_batch_cnt = 0
                     if batch_id > 0 and batch_id % args.dev_interval == 0:
