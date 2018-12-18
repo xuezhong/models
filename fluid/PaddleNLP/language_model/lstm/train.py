@@ -192,14 +192,19 @@ def load_params(train_prog, train_exe, place, logger, args=None):
             for name in name_dict:
                 s = name_dict[name]
                 if s == slot:
-                    tensor = train_exe.scope.find_var(name).get_tensor()
-                    shape = tensor.shape()
-                    tensor_len = np.prod(shape)
-                    new_array = p_array[offset:offset + tensor_len]
-                    new_array = new_array.reshape(shape)
-                    tensor.set(new_array.astype(np.float32), place)
-                    logger.info('loaded {}[{}] from {}[{}:{}]'.format(
-                        name, shape, data, offset, offset + tensor_len))
+                    card = 0
+                    #for scope in [train_exe.scope]:#train_exe.executor.local_scopes():
+                    for scope in train_exe.executor.local_scopes():
+			tensor = scope.find_var(name).get_tensor()
+			shape = tensor.shape()
+			tensor_len = np.prod(shape)
+			new_array = p_array[offset:offset + tensor_len]
+			new_array = new_array.reshape(shape)
+                        placex=fluid.CUDAPlace(card)
+			tensor.set(new_array.astype(np.float32), placex)
+			logger.info('card {} loaded {}[{}] from {}[{}:{}]'.format(card,
+			    name, shape, data, offset, offset + tensor_len))
+                        card = card + 1
                     offset += tensor_len
 
 
@@ -242,25 +247,25 @@ def debug_init(train_prog, vars, vars_name):
             train_prog.block(0).var(p_name).persistable = True
 
 
-def debug_print(train_exe, logger, args):
+def debug_print(scope, logger, args):
     if not args.para_print:
         return
     for name_pair in names:
         name = name_pair[0]
         p_name = name_pair[1]
-        if not train_exe.scope.find_var(name):
+        if not scope.find_var(name):
             logger.info("var: {0} not find".format(p_name))
             continue
-        p_array = np.array(train_exe.scope.find_var(name).get_tensor()).astype(
+        p_array = np.array(scope.find_var(name).get_tensor()).astype(
             'float64')
         var_print('var', p_array, p_name, name, args.detail, logger)
     for name_pair in grad_names:
         name = name_pair[0]
         p_name = name_pair[1]
-        if not train_exe.scope.find_var(name):
+        if not scope.find_var(name):
             logger.info("grad: {0} not find".format(p_name))
             continue
-        p_array = np.array(train_exe.scope.find_var(name).get_tensor()).astype(
+        p_array = np.array(scope.find_var(name).get_tensor()).astype(
             'float64')
         var_print('grad', p_array, p_name, name, args.detail, logger)
 
@@ -268,44 +273,46 @@ def debug_print(train_exe, logger, args):
 def print_para(train_prog, train_exe, logger, optimizer=None, args=None):
     if not args.para_print:
         return
-    debug_print(train_exe, logger, args)
-    init_slot()
     param_list = train_prog.block(0).all_parameters()
     param_name_list = [p.name for p in param_list]
-    num_sum = 0
-    for p_name in param_name_list:
-        p_name = p_name + '@GRAD'
-        if not train_exe.scope.find_var(p_name):
-            logger.info("grad para: {0} not find".format(p_name))
-            #import pdb; pdb.set_trace()
-            continue
-        try:
-            p_array = np.array(train_exe.scope.find_var(p_name).get_tensor())
-        except:
-            #import pdb; pdb.set_trace()
-            logger.info("grad para: {0} failed".format(p_name))
-            continue
-        param_num = np.prod(p_array.shape)
-        var_print('grad para', p_array, p_name, p_name, args.detail, logger)
-
-    if optimizer:    
+    card = 0
+    for scope in train_exe.executor.local_scopes():
+        init_slot()
+        num_sum = 0
+        logger.info('card {}'.format(card))
+        debug_print(scope, logger, args)
+	for p_name in param_name_list:
+	    p_name = p_name + '@GRAD'
+	    if not scope.find_var(p_name):
+		logger.info("grad para: {0} not find".format(p_name))
+		#import pdb; pdb.set_trace()
+		continue
+	    try:
+		p_array = np.array(scope.find_var(p_name).get_tensor())
+	    except:
+		#import pdb; pdb.set_trace()
+		logger.info("grad para: {0} failed".format(p_name))
+		continue
+	    param_num = np.prod(p_array.shape)
+	    var_print('grad para', p_array, p_name, p_name, args.detail, logger)
+	if optimizer:    
+	    for p_name in param_name_list:
+		acc_str='moment'
+		acc = optimizer._accumulators[acc_str][p_name]
+		p_array = np.array(scope.find_var(acc.name).get_tensor())
+		var_print(acc_str, p_array, p_name, acc.name, args.detail, logger)
         for p_name in param_name_list:
-            acc_str='moment'
-            acc = optimizer._accumulators[acc_str][p_name]
-            p_array = np.array(train_exe.scope.find_var(acc.name).get_tensor())
-            var_print(acc_str, p_array, p_name, acc.name, args.detail, logger)
+	    p_array = np.array(scope.find_var(p_name).get_tensor())
+	    slots = name2slot(p_name)
+	    if slots:
+		update_slot(slots, p_array)
+	    param_num = np.prod(p_array.shape)
+	    num_sum = num_sum + param_num
+	    var_print('para', p_array, p_name, p_name, args.detail, logger)
+        record_slot(logger)
+        logger.info("total param num: {0}".format(num_sum))
 
-
-    for p_name in param_name_list:
-        p_array = np.array(train_exe.scope.find_var(p_name).get_tensor())
-        slots = name2slot(p_name)
-        if slots:
-            update_slot(slots, p_array)
-        param_num = np.prod(p_array.shape)
-        num_sum = num_sum + param_num
-        var_print('para', p_array, p_name, p_name, args.detail, logger)
-    record_slot(logger)
-    logger.info("total param num: {0}".format(num_sum))
+        card  = card + 1 
 
 
 def prepare_batch_input(batch, args):
@@ -323,6 +330,7 @@ def batch_reader(batch_list, args):
     res = []
     for batch in batch_list:
         res.append(prepare_batch_input(batch, args))
+        #res.append(prepare_batch_input(batch_list[0], args))
     return res
 
 
@@ -550,6 +558,7 @@ def train():
                 with open("program.desc", 'w') as f:
                     print(str(framework.default_main_program()), file=f)
             parallel_executor = fluid.ParallelExecutor(
+                loss_name=loss.name,
                 main_program=main_program,
                 use_cuda=bool(args.use_gpu),
                 exec_strategy=exe_strategy)
