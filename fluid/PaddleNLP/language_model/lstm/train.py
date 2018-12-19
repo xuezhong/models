@@ -298,9 +298,12 @@ def print_para(train_prog, train_exe, logger, optimizer=None, args=None):
 	if optimizer:    
 	    for p_name in param_name_list:
 		acc_str='moment'
-		acc = optimizer._accumulators[acc_str][p_name]
-		p_array = np.array(scope.find_var(acc.name).get_tensor())
-		var_print(acc_str, p_array, p_name, acc.name, args.detail, logger)
+                try:
+		    acc = optimizer._accumulators[acc_str][p_name]
+		    p_array = np.array(scope.find_var(acc.name).get_tensor())
+		    var_print(acc_str, p_array, p_name, acc.name, args.detail, logger)
+                except:
+                    logger.info("moment: {0} failed".format(p_name))
         for p_name in param_name_list:
 	    p_array = np.array(scope.find_var(p_name).get_tensor())
 	    slots = name2slot(p_name)
@@ -479,7 +482,7 @@ def train():
     vocab = data.Vocabulary(args.vocab_path, validate_file=True)
     vocab_size = vocab.size
     train_data = data.BidirectionalLMDataset(
-        args.train_path, vocab, test=False, shuffle_on_load=False)
+        args.train_path, vocab, test=True, shuffle_on_load=False)
 
     logger.info("finished load data")
 

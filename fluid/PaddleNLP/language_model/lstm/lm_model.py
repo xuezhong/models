@@ -54,6 +54,7 @@ def lstmp_encoder(input_seq, gate_size,  h_0, c_0, para_name, proj_size, args):
                                    act=None,
                                    bias_attr=False)
     if args.debug:
+        layers.Print(input_seq, message='input_seq', summarize=10)
         layers.Print(input_proj, message='input_proj', summarize=10)
     hidden, cell = layers.dynamic_lstmp(
         input=input_proj,
@@ -118,8 +119,9 @@ def encoder(x, y, vocab_size, emb_size, init_hidden=None, init_cell=None, para_n
 
     projection = layers.reshape(projection, shape=[-1, vocab_size])
 
+    label = layers.one_hot(input=y, depth=vocab_size)
     loss = layers.softmax_with_cross_entropy(
-	logits=projection, label=y, soft_label=False)
+	logits=projection, label=label, soft_label=True)
     return [x_emb, projection, loss], rnn_outs, rnn_outs_ori, cells, projs
 
 def lm_model(hidden_size,
