@@ -637,9 +637,9 @@ def train():
 
                     total_num += args.batch_size * dev_count
                     n_batch_loss += np.array(fetch_outs[0]).sum()
-                    logger.info("n_batch_loss from {} to {} is {}, {} ".format(
-                        batch_id - log_interval, batch_id, n_batch_loss,
-                        np.array(fetch_outs[0]).sum()))
+                    #logger.info("n_batch_loss from {} to {} is {}, {} ".format(
+                    #    batch_id - log_interval, batch_id, n_batch_loss,
+                    #    np.array(fetch_outs[0]).sum()))
                     n_batch_cnt += len(np.array(fetch_outs[0]))
                     total_loss += cost_train * args.batch_size * dev_count
 
