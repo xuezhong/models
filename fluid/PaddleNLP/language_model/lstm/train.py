@@ -195,15 +195,16 @@ def load_params(train_prog, train_exe, place, logger, args=None):
                     card = 0
                     #for scope in [train_exe.scope]:#train_exe.executor.local_scopes():
                     for scope in train_exe.executor.local_scopes():
-			tensor = scope.find_var(name).get_tensor()
-			shape = tensor.shape()
-			tensor_len = np.prod(shape)
-			new_array = p_array[offset:offset + tensor_len]
-			new_array = new_array.reshape(shape)
-                        placex=fluid.CUDAPlace(card)
-			tensor.set(new_array.astype(np.float32), placex)
-			logger.info('card {} loaded {}[{}] from {}[{}:{}]'.format(card,
-			    name, shape, data, offset, offset + tensor_len))
+                        tensor = scope.find_var(name).get_tensor()
+                        shape = tensor.shape()
+                        tensor_len = np.prod(shape)
+                        new_array = p_array[offset:offset + tensor_len]
+                        new_array = new_array.reshape(shape)
+                        placex = fluid.CUDAPlace(card)
+                        tensor.set(new_array.astype(np.float32), placex)
+                        logger.info('card {} loaded {}[{}] from {}[{}:{}]'.
+                                    format(card, name, shape, data, offset,
+                                           offset + tensor_len))
                         card = card + 1
                     offset += tensor_len
 
@@ -256,8 +257,7 @@ def debug_print(scope, logger, args):
         if not scope.find_var(name):
             logger.info("var: {0} not find".format(p_name))
             continue
-        p_array = np.array(scope.find_var(name).get_tensor()).astype(
-            'float64')
+        p_array = np.array(scope.find_var(name).get_tensor()).astype('float64')
         var_print('var', p_array, p_name, name, args.detail, logger)
     for name_pair in grad_names:
         name = name_pair[0]
@@ -265,8 +265,20 @@ def debug_print(scope, logger, args):
         if not scope.find_var(name):
             logger.info("grad: {0} not find".format(p_name))
             continue
-        p_array = np.array(scope.find_var(name).get_tensor()).astype(
-            'float64')
+        p_array = np.array(scope.find_var(name).get_tensor()).astype('float64')
+        var_print('grad', p_array, p_name, name, args.detail, logger)
+
+
+def vars_print(logger, args, vars=None, grad_vars=None):
+    if not args.para_print:
+        return
+    for var, vname in zip(vars):
+        name, p_name = vname
+        p_array = np.array(var).astype('float64')
+        var_print('var', p_array, p_name, name, args.detail, logger)
+    for grad, gname in zip(grad_vars):
+        name, p_name = gname
+        p_array = np.array(grad).astype('float64')
         var_print('grad', p_array, p_name, name, args.detail, logger)
 
 
@@ -281,41 +293,39 @@ def print_para(train_prog, train_exe, logger, optimizer=None, args=None):
         num_sum = 0
         logger.info('card {}'.format(card))
         debug_print(scope, logger, args)
-	for p_name in param_name_list:
-	    p_name = p_name + '@GRAD'
-	    if not scope.find_var(p_name):
-		logger.info("grad para: {0} not find".format(p_name))
-		#import pdb; pdb.set_trace()
-		continue
-	    try:
-		p_array = np.array(scope.find_var(p_name).get_tensor())
-	    except:
-		#import pdb; pdb.set_trace()
-		logger.info("grad para: {0} failed".format(p_name))
-		continue
-	    param_num = np.prod(p_array.shape)
-	    var_print('grad para', p_array, p_name, p_name, args.detail, logger)
-	if optimizer:    
-	    for p_name in param_name_list:
-		acc_str='moment'
-                try:
-		    acc = optimizer._accumulators[acc_str][p_name]
-		    p_array = np.array(scope.find_var(acc.name).get_tensor())
-		    var_print(acc_str, p_array, p_name, acc.name, args.detail, logger)
-                except:
-                    logger.info("moment: {0} failed".format(p_name))
         for p_name in param_name_list:
-	    p_array = np.array(scope.find_var(p_name).get_tensor())
-	    slots = name2slot(p_name)
-	    if slots:
-		update_slot(slots, p_array)
-	    param_num = np.prod(p_array.shape)
-	    num_sum = num_sum + param_num
-	    var_print('para', p_array, p_name, p_name, args.detail, logger)
+            p_name = p_name + '@GRAD'
+            if not scope.find_var(p_name):
+                logger.info("grad para: {0} not find".format(p_name))
+                #import pdb; pdb.set_trace()
+                continue
+            try:
+                p_array = np.array(scope.find_var(p_name).get_tensor())
+            except:
+                #import pdb; pdb.set_trace()
+                logger.info("grad para: {0} failed".format(p_name))
+                continue
+            param_num = np.prod(p_array.shape)
+            var_print('grad para', p_array, p_name, p_name, args.detail, logger)
+        if optimizer:
+            for p_name in param_name_list:
+                acc_str = 'moment'
+                acc = optimizer._accumulators[acc_str][p_name]
+                p_array = np.array(scope.find_var(acc.name).get_tensor())
+                var_print(acc_str, p_array, p_name, acc.name, args.detail,
+                          logger)
+        for p_name in param_name_list:
+            p_array = np.array(scope.find_var(p_name).get_tensor())
+            slots = name2slot(p_name)
+            if slots:
+                update_slot(slots, p_array)
+            param_num = np.prod(p_array.shape)
+            num_sum = num_sum + param_num
+            var_print('para', p_array, p_name, p_name, args.detail, logger)
         record_slot(logger)
         logger.info("total param num: {0}".format(num_sum))
 
-        card  = card + 1 
+        card = card + 1
 
 
 def prepare_batch_input(batch, args):
@@ -521,7 +531,9 @@ def train():
             # build optimizer
             if args.optim == 'adagrad':
                 optimizer = fluid.optimizer.Adagrad(
-                    learning_rate=args.learning_rate, epsilon=0.0, initial_accumulator_value=1.0)
+                    learning_rate=args.learning_rate,
+                    epsilon=0.0,
+                    initial_accumulator_value=1.0)
             elif args.optim == 'sgd':
                 optimizer = fluid.optimizer.SGD(
                     learning_rate=args.learning_rate)
@@ -534,7 +546,7 @@ def train():
             else:
                 logger.error('Unsupported optimizer: {}'.format(args.optim))
                 exit(-1)
-            optimizer.minimize(loss*args.num_steps)
+            optimizer.minimize(loss * args.num_steps)
 
             # initialize parameters
             place = core.CUDAPlace(0) if args.use_gpu else core.CPUPlace()
@@ -581,46 +593,63 @@ def train():
                 total_num = 0
                 n_batch_loss = 0.0
                 n_batch_cnt = 0
-		last_hidden_values = np.zeros(
-		    (dev_count, args.num_layers * 2 * batch_size * args.embed_size), dtype='float32')
-		last_cell_values = np.zeros(
-		    (dev_count, args.num_layers * 2 * batch_size * hidden_size), dtype='float32')
+                last_hidden_values = np.zeros(
+                    (dev_count,
+                     args.num_layers * 2 * batch_size * args.embed_size),
+                    dtype='float32')
+                last_cell_values = np.zeros(
+                    (dev_count, args.num_layers * 2 * batch_size * hidden_size),
+                    dtype='float32')
                 for batch_id, batch_list in enumerate(train_reader(), 1):
                     feed_data = batch_reader(batch_list, args)
-                    feed=list(feeder.feed_parallel(feed_data, dev_count))
+                    feed = list(feeder.feed_parallel(feed_data, dev_count))
                     for i in range(dev_count):
                         init_hidden_tensor = fluid.core.LoDTensor()
                         if args.use_gpu:
-                            placex=fluid.CUDAPlace(i)
+                            placex = fluid.CUDAPlace(i)
                         else:
-                            placex=fluid.CPUPlace()
+                            placex = fluid.CPUPlace()
                         init_hidden_tensor.set(last_hidden_values[i], placex)
                         init_cell_tensor = fluid.core.LoDTensor()
                         init_cell_tensor.set(last_cell_values[i], placex)
 
                         feed[i]['init_hiddens'] = init_hidden_tensor
                         feed[i]['init_cells'] = init_cell_tensor
-                       
+
                     fetch_outs = parallel_executor.run(
                         feed=feed,
-                        fetch_list=[loss.name, last_hidden.name, last_cell.name],
+                        fetch_list=[
+                            loss.name, last_hidden.name, last_cell.name
+                        ],  # + [x[0] for x in names] + [x[0] for x in grad_names],
                         return_numpy=False)
                     cost_train = np.array(fetch_outs[0]).mean()
                     last_hidden_values = np.array(fetch_outs[1])
-                    last_hidden_values = last_hidden_values.reshape((dev_count, args.num_layers * 2 * batch_size * args.embed_size))
+                    last_hidden_values = last_hidden_values.reshape(
+                        (dev_count,
+                         args.num_layers * 2 * batch_size * args.embed_size))
                     last_cell_values = np.array(fetch_outs[2])
-                    last_cell_values = last_cell_values.reshape((dev_count, args.num_layers * 2 * batch_size * args.hidden_size))
+                    last_cell_values = last_cell_values.reshape(
+                        (dev_count,
+                         args.num_layers * 2 * batch_size * args.hidden_size))
+
+                    #vars = fetch_outs[2:2+len(names)]
+                    #grad_vars = fetch_outs[2+len(names):]
 
                     total_num += args.batch_size * dev_count
                     n_batch_loss += np.array(fetch_outs[0]).sum()
+                    #logger.info("n_batch_loss from {} to {} is {}, {} ".format(
+                    #    batch_id - log_interval, batch_id, n_batch_loss,
+                    #    np.array(fetch_outs[0]).sum()))
                     n_batch_cnt += len(np.array(fetch_outs[0]))
                     total_loss += cost_train * args.batch_size * dev_count
 
                     if batch_id > 0 and batch_id % log_interval == 0:
+                        #vars_print(logger, args, vars=(vars, names), grad_vars=(grad_vars, grad_names))
                         print_para(main_program, parallel_executor, logger,
                                    optimizer, args)
                         ppl = np.exp(n_batch_loss / n_batch_cnt)
-                        logger.info("ppl from {} to {} is {} ".format(batch_id - log_interval, batch_id, ppl))
+                        logger.info("ppl from {} to {} is {} ".format(
+                            batch_id - log_interval, batch_id, ppl))
                         n_batch_loss = 0.0
                         n_batch_cnt = 0
                     if batch_id > 0 and batch_id % args.dev_interval == 0:
