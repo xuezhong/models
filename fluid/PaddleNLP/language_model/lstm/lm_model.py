@@ -18,7 +18,6 @@ from __future__ import print_function
 
 import paddle.fluid.layers as layers
 import paddle.fluid as fluid
-from paddle.fluid.layers.control_flow import StaticRNN as PaddingRNN
 import numpy as np
 
 
@@ -135,108 +134,111 @@ def encoder(x,
 	logits=projection, label=label, soft_label=True)
     return [x_emb, projection, loss], rnn_outs, rnn_outs_ori, cells, projs
 
+class LanguageModel(object):
+    def __init__(self, args , vocab_size):
+        self.args = args
+        self.vocab_size = vocab_size
 
-def lm_model(hidden_size,
-             vocab_size,
-             batch_size,
-             num_layers=2,
-             num_steps=20,
-             init_scale=0.1,
-             args=None):
-    emb_size = args.embed_size
-    proj_size = args.embed_size
-    lstm_outputs = []
+    def build(self):
+        args = self.args
+        emb_size = args.embed_size
+        proj_size = args.embed_size
+        hidden_size = args.hidden_size
+        batch_size = args.batch_size
+        num_layers = args.num_layers
+        num_steps = args.num_steps
 
-    x_f = layers.data(name="x", shape=[1], dtype='int64', lod_level=1)
-    y_f = layers.data(name="y", shape=[1], dtype='int64', lod_level=1)
+        lstm_outputs = []
 
-    x_b = layers.data(name="x_r", shape=[1], dtype='int64', lod_level=1)
-    y_b = layers.data(name="y_r", shape=[1], dtype='int64', lod_level=1)
+        x_f = layers.data(name="x", shape=[1], dtype='int64', lod_level=1)
+        y_f = layers.data(name="y", shape=[1], dtype='int64', lod_level=1)
 
-    init_hiddens_ = layers.data(name="init_hiddens", shape=[1], dtype='float32')
-    init_cells_ = layers.data(name="init_cells", shape=[1], dtype='float32')
+        x_b = layers.data(name="x_r", shape=[1], dtype='int64', lod_level=1)
+        y_b = layers.data(name="y_r", shape=[1], dtype='int64', lod_level=1)
 
-    if args.debug:
-        layers.Print(init_cells_, message='init_cells_', summarize=10)
-        layers.Print(init_hiddens_, message='init_hiddens_', summarize=10)
+        init_hiddens_ = layers.data(name="init_hiddens", shape=[1], dtype='float32')
+        init_cells_ = layers.data(name="init_cells", shape=[1], dtype='float32')
 
-    init_hiddens = layers.reshape(
-        init_hiddens_, shape=[2 * num_layers, -1, proj_size])
-    init_cells = layers.reshape(
-        init_cells_, shape=[2 * num_layers, -1, hidden_size])
+        if args.debug:
+            layers.Print(init_cells_, message='init_cells_', summarize=10)
+            layers.Print(init_hiddens_, message='init_hiddens_', summarize=10)
 
-    init_hidden = layers.slice(
-        init_hiddens, axes=[0], starts=[0], ends=[num_layers])
-    init_cell = layers.slice(
-        init_cells, axes=[0], starts=[0], ends=[num_layers])
-    init_hidden_r = layers.slice(
-        init_hiddens, axes=[0], starts=[num_layers], ends=[2 * num_layers])
-    init_cell_r = layers.slice(
-        init_cells, axes=[0], starts=[num_layers], ends=[2 * num_layers])
+        init_hiddens = layers.reshape(
+            init_hiddens_, shape=[2 * num_layers, -1, proj_size])
+        init_cells = layers.reshape(
+            init_cells_, shape=[2 * num_layers, -1, hidden_size])
 
-    forward, fw_hiddens, fw_hiddens_ori, fw_cells, fw_projs = encoder(
-        x_f,
-        y_f,
-        vocab_size,
-        emb_size,
-        init_hidden,
-        init_cell,
-        para_name='fw_',
-        args=args)
-    backward, bw_hiddens, bw_hiddens_ori, bw_cells, bw_projs = encoder(
-        x_b,
-        y_b,
-        vocab_size,
-        emb_size,
-        init_hidden_r,
-        init_cell_r,
-        para_name='bw_',
-        args=args)
+        init_hidden = layers.slice(
+            init_hiddens, axes=[0], starts=[0], ends=[num_layers])
+        init_cell = layers.slice(
+            init_cells, axes=[0], starts=[0], ends=[num_layers])
+        init_hidden_r = layers.slice(
+            init_hiddens, axes=[0], starts=[num_layers], ends=[2 * num_layers])
+        init_cell_r = layers.slice(
+            init_cells, axes=[0], starts=[num_layers], ends=[2 * num_layers])
 
-    losses = layers.concat([forward[-1], backward[-1]])
-    loss = layers.reduce_mean(losses)
-    loss.permissions = True
+        forward, fw_hiddens, fw_hiddens_ori, fw_cells, fw_projs = encoder(
+            x_f,
+            y_f,
+            self.vocab_size,
+            emb_size,
+            init_hidden,
+            init_cell,
+            para_name='fw_',
+            args=args)
+        backward, bw_hiddens, bw_hiddens_ori, bw_cells, bw_projs = encoder(
+            x_b,
+            y_b,
+            self.vocab_size,
+            emb_size,
+            init_hidden_r,
+            init_cell_r,
+            para_name='bw_',
+            args=args)
 
-    if args.debug:
-        x_emb, projection, loss = forward
-        layers.Print(init_cells, message='init_cells', summarize=10)
-        layers.Print(init_hiddens, message='init_hiddens', summarize=10)
-        layers.Print(init_cell, message='init_cell', summarize=10)
-        layers.Print(y_b, message='y_b', summarize=10)
-        layers.Print(x_emb, message='x_emb', summarize=10)
-        layers.Print(projection, message='projection', summarize=10)
-        layers.Print(loss, message='loss', summarize=320)
-    grad_vars = [x_f, y_f, x_b, y_b, loss]
-    grad_vars_name = ['x', 'y', 'x_r', 'y_r', 'final_loss']
-    fw_vars_name = ['x_emb', 'proj', 'loss'] + ['init_hidden', 'init_cell'] + [
-        'rnn_out', 'rnn_out2', 'cell', 'cell2', 'xproj', 'xproj2'
-    ]
-    bw_vars_name = ['x_emb_r', 'proj_r', 'loss_r'] + [
-        'init_hidden_r', 'init_cell_r'
-    ] + [
-        'rnn_out_r', 'rnn_out2_r', 'cell_r', 'cell2_r', 'xproj_r', 'xproj2_r'
-    ]
-    fw_vars = forward + [init_hidden, init_cell
-                         ] + fw_hiddens + fw_cells + fw_projs
-    bw_vars = backward + [init_hidden_r, init_cell_r
-                          ] + bw_hiddens + bw_cells + bw_projs
-    for i in range(len(fw_vars_name)):
-        grad_vars.append(fw_vars[i])
-        grad_vars.append(bw_vars[i])
-        grad_vars_name.append(fw_vars_name[i])
-        grad_vars_name.append(bw_vars_name[i])
-    feeding_list = ['x', 'y', 'x_r', 'y_r']
-    last_hidden = [
-        fluid.layers.sequence_last_step(input=x)
-        for x in fw_hiddens_ori + bw_hiddens_ori
-    ]
-    last_cell = [
-        fluid.layers.sequence_last_step(input=x) for x in fw_cells + bw_cells
-    ]
-    last_hidden = layers.concat(last_hidden, axis=0)
-    last_cell = layers.concat(last_cell, axis=0)
-    if args.debug:
-        layers.Print(last_cell, message='last_cell', summarize=10)
-        layers.Print(last_hidden, message='last_hidden', summarize=10)
+        losses = layers.concat([forward[-1], backward[-1]])
+        self.loss = layers.reduce_mean(losses)
+        self.loss.permissions = True
 
-    return loss, last_hidden, last_cell, feeding_list, grad_vars, grad_vars_name
+        if args.debug:
+            x_emb, projection, loss = forward
+            layers.Print(init_cells, message='init_cells', summarize=10)
+            layers.Print(init_hiddens, message='init_hiddens', summarize=10)
+            layers.Print(init_cell, message='init_cell', summarize=10)
+            layers.Print(y_b, message='y_b', summarize=10)
+            layers.Print(x_emb, message='x_emb', summarize=10)
+            layers.Print(projection, message='projection', summarize=10)
+            layers.Print(self.loss, message='loss', summarize=320)
+        self.grad_vars = [x_f, y_f, x_b, y_b, self.loss]
+        self.grad_vars_name = ['x', 'y', 'x_r', 'y_r', 'final_loss']
+        fw_vars_name = ['x_emb', 'proj', 'loss'] + ['init_hidden', 'init_cell'] + [
+            'rnn_out', 'rnn_out2', 'cell', 'cell2', 'xproj', 'xproj2'
+        ]
+        bw_vars_name = ['x_emb_r', 'proj_r', 'loss_r'] + [
+            'init_hidden_r', 'init_cell_r'
+        ] + [
+            'rnn_out_r', 'rnn_out2_r', 'cell_r', 'cell2_r', 'xproj_r', 'xproj2_r'
+        ]
+        fw_vars = forward + [init_hidden, init_cell
+                             ] + fw_hiddens + fw_cells + fw_projs
+        bw_vars = backward + [init_hidden_r, init_cell_r
+                              ] + bw_hiddens + bw_cells + bw_projs
+        for i in range(len(fw_vars_name)):
+            self.grad_vars.append(fw_vars[i])
+            self.grad_vars.append(bw_vars[i])
+            self.grad_vars_name.append(fw_vars_name[i])
+            self.grad_vars_name.append(bw_vars_name[i])
+        self.feed_order = ['x', 'y', 'x_r', 'y_r']
+        self.last_hidden = [
+            fluid.layers.sequence_last_step(input=x)
+            for x in fw_hiddens_ori + bw_hiddens_ori
+        ]
+        self.last_cell = [
+            fluid.layers.sequence_last_step(input=x) for x in fw_cells + bw_cells
+        ]
+        self.last_hidden = layers.concat(self.last_hidden, axis=0)
+        self.last_cell = layers.concat(self.last_cell, axis=0)
+        if args.debug:
+            layers.Print(self.last_cell, message='last_cell', summarize=10)
+            layers.Print(self.last_hidden, message='last_hidden', summarize=10)
+
