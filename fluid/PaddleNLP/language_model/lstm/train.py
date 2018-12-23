@@ -552,6 +552,7 @@ def train():
 		worker_endpoints = []
 		for ip in worker_ips.split(","):
 		    worker_endpoints.append(':'.join([ip, port]))
+                worker_endpoints_env = ','.join(worker_endpoints)
 		trainers_num = len(worker_endpoints)
 		current_endpoint = os.getenv("POD_IP") + ":" + port
             if trainer_id == 0:
@@ -674,7 +675,7 @@ def train_loop(args,
 
     logger.info("begin to load data")
     train_data = data.BidirectionalLMDataset(
-        args.train_path, vocab, test=True, shuffle_on_load=False)
+        args.train_path, vocab, test=args.shuffle, shuffle_on_load=args.shuffle)
     logger.info("finished load vocab")
 
     # get train epoch size
