@@ -68,6 +68,7 @@ def parse_args():
         '--log_path',
         help='path of the log file. If not set, logs are printed to console')
     parser.add_argument('--enable_ce', action='store_true')
+    parser.add_argument('--test_nccl', action='store_true')
     parser.add_argument('--optim', default='adagrad', help='optimizer type')
     parser.add_argument('--para_print', action='store_true')
     parser.add_argument(

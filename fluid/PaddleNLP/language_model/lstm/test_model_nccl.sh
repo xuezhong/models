@@ -18,6 +18,5 @@ python  train.py \
 --vocab_path baike/vocabulary_min5k.txt \
 --learning_rate 0.2 \
 --use_gpu True \
---local False \
---shuffle True \
+--test_nccl \
 --update_method nccl2  > ${PADDLE_TRAINER_ID}.log  2>&1 &
