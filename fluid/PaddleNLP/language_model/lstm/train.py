@@ -772,9 +772,9 @@ def train_loop(args,
         total_time += end_time - start_time
         logger.info("train ppl {}".format(ppl))
 
-        if epoch_id == max_epoch - 1 and args.enable_ce:
+        if epoch_id == args.max_epoch - 1 and args.enable_ce:
             logger.info("lstm_language_model_duration\t%s" %
-                        (total_time / max_epoch))
+                        (total_time / args.max_epoch))
             logger.info("lstm_language_model_loss\t%s" % ppl[0])
 
         model_path = os.path.join("model_new/", str(epoch_id))
