@@ -536,7 +536,7 @@ def train():
             exe = Executor(place)
 
     if args.local:
-        logging.info("local start_up:")
+        logger.info("local start_up:")
         train_loop(args, logger, vocab, train_prog, startup_prog, infer_prog, model, optimizer)
     else:
         if args.update_method == "nccl2":
@@ -556,13 +556,13 @@ def train():
 		trainers_num = len(worker_endpoints)
 		current_endpoint = os.getenv("POD_IP") + ":" + port
             if trainer_id == 0:
-                logging.info("train_id == 0, sleep 60s")
+                logger.info("train_id == 0, sleep 60s")
                 time.sleep(60)
 
 
-            logging.info("trainers_num:{}".format(trainers_num))
-            logging.info("worker_endpoints:{}".format(worker_endpoints))
-            logging.info("current_endpoint:{}".format(current_endpoint))
+            logger.info("trainers_num:{}".format(trainers_num))
+            logger.info("worker_endpoints:{}".format(worker_endpoints))
+            logger.info("current_endpoint:{}".format(current_endpoint))
             config = fluid.DistributeTranspilerConfig()
             config.mode = "nccl2"
             t = fluid.DistributeTranspiler(config=config)
@@ -585,11 +585,11 @@ def train():
             current_endpoint = os.getenv("POD_IP") + ":" + port
             trainer_id = int(os.getenv("PADDLE_TRAINER_ID"))
 
-            logging.info("pserver_endpoints:{}".format(pserver_endpoints))
-            logging.info("current_endpoint:{}".format(current_endpoint))
-            logging.info("trainer_id:{}".format(trainer_id))
-            logging.info("pserver_ips:{}".format(pserver_ips))
-            logging.info("port:{}".format(port))
+            logger.info("pserver_endpoints:{}".format(pserver_endpoints))
+            logger.info("current_endpoint:{}".format(current_endpoint))
+            logger.info("trainer_id:{}".format(trainer_id))
+            logger.info("pserver_ips:{}".format(pserver_ips))
+            logger.info("port:{}".format(port))
 
             t = fluid.DistributeTranspiler()
             t.transpile(
@@ -600,11 +600,11 @@ def train():
                 startup_program=startup_prog)
 
             if training_role == "PSERVER":
-                logging.info("distributed: pserver started")
+                logger.info("distributed: pserver started")
                 current_endpoint = os.getenv("POD_IP") + ":" + os.getenv(
                     "PADDLE_PORT")
                 if not current_endpoint:
-                    logging.critical("need env SERVER_ENDPOINT")
+                    logger.critical("need env SERVER_ENDPOINT")
                     exit(1)
                 pserver_prog = t.get_pserver_program(current_endpoint)
                 pserver_startup = t.get_startup_program(current_endpoint,
@@ -613,11 +613,11 @@ def train():
                 exe.run(pserver_startup)
                 exe.run(pserver_prog)
             elif training_role == "TRAINER":
-                logging.info("distributed: trainer started")
+                logger.info("distributed: trainer started")
                 trainer_prog = t.get_trainer_program()
                 train_loop(args, logger, vocab, train_prog, startup_prog, infer_prog, model, optimizer)
             else:
-                logging.critical(
+                logger.critical(
                     "environment var TRAINER_ROLE should be TRAINER os PSERVER")
                 exit(1)
 
@@ -669,7 +669,9 @@ def train_loop(args,
         loss_name=model.loss.name,
         main_program=main_prog,
         use_cuda=bool(args.use_gpu),
-        exec_strategy=exe_strategy)
+        exec_strategy=exe_strategy,
+        num_trainers=nccl2_num_trainers,
+        trainer_id=nccl2_trainer_id)
     load_params(main_prog, parallel_executor, place, logger, args)
     print_para(main_prog, parallel_executor, logger, optimizer, args)
 

@@ -19,8 +19,8 @@ export FLAGS_nccl_dir=/usr/lib/x86_64-linux-gnu/
 unset http_proxy https_proxy
 
 #paddle debug envs
-export GLOG_v=0
-export GLOG_logtostderr=0
+export GLOG_v=1
+export GLOG_logtostderr=1
 
 #nccl debug envs
 export NCCL_DEBUG=INFO

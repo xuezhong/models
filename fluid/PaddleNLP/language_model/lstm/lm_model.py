@@ -82,7 +82,7 @@ def encoder(x,
         input=x,
         size=[vocab_size, emb_size],
         dtype='float32',
-        is_sparse=True,
+        is_sparse=False,
         param_attr=fluid.ParamAttr(
             name='embedding_para',
             initializer=fluid.initializer.UniformInitializer(

@@ -12,11 +12,13 @@ echo $LD_LIBRARY_PATH
 
 echo "run on trainer:" ${PADDLE_TRAINER_ID}
 
-python  train.py \
+python -u train.py \
 --train_path='baike/train/sentence_file_*'  \
 --test_path='baike/dev/sentence_file_*'  \
 --vocab_path baike/vocabulary_min5k.txt \
 --learning_rate 0.2 \
 --use_gpu True \
 --test_nccl \
+--log_interval 1 \
+--para_print \
 --update_method nccl2  > ${PADDLE_TRAINER_ID}.log  2>&1 &
