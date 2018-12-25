@@ -227,6 +227,7 @@ class LMDataset(object):
     def _choose_random_shard(self):
         if len(self._shards_to_choose) == 0:
             self._shards_to_choose = list(self._all_shards)
+            print('one epoch end and shuffle data')
             random.shuffle(self._shards_to_choose)
         shard_name = self._shards_to_choose.pop()
         return shard_name
