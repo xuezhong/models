@@ -71,6 +71,7 @@ def parse_args():
     parser.add_argument('--test_nccl', action='store_true')
     parser.add_argument('--optim', default='adagrad', help='optimizer type')
     parser.add_argument('--para_print', action='store_true')
+    parser.add_argument('--sample_softmax', action='store_true')
     parser.add_argument(
         "--learning_rate",
         type=float,
@@ -109,6 +110,7 @@ def parse_args():
     parser.add_argument('--update_method', type=str, default='nccl2')
     parser.add_argument('--detail', action='store_true')
     parser.add_argument('--random_seed', type=int, default=123)
+    parser.add_argument('--n_negative_samples_batch', type=int, default=8000)
     args = parser.parse_args()
 
     return args

@@ -129,9 +129,15 @@ def encoder(x,
 
     projection = layers.reshape(projection, shape=[-1, vocab_size])
 
-    label = layers.one_hot(input=y, depth=vocab_size)
-    loss = layers.softmax_with_cross_entropy(
-	logits=projection, label=label, soft_label=True)
+    if args.sample_softmax:
+        sampled_logits, sampled_label = layers.sample_logits(logits=projection, label=y, num_samples=args.n_negative_samples_batch) 
+        sampled_label = layers.one_hot(input=sampled_label, depth=args.n_negative_samples_batch + 1)
+        loss = layers.softmax_with_cross_entropy(
+	    logits=sampled_logits, label=sampled_label, soft_label=True)
+    else:
+        label = layers.one_hot(input=y, depth=vocab_size)
+        loss = layers.softmax_with_cross_entropy(
+	    logits=projection, label=label, soft_label=True)
     return [x_emb, projection, loss], rnn_outs, rnn_outs_ori, cells, projs
 
 class LanguageModel(object):

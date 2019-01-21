@@ -1,6 +1,6 @@
 
 #CUDA_VISIBLE_DEVICES=2 gdb -ex r --args python train.py \
-CUDA_VISIBLE_DEVICES=4  python  train.py \
+CUDA_VISIBLE_DEVICES=5  python  train.py \
 	--data_path baike  \
 	--vocab_path baike/vocabulary_min5k.txt \
 	--log_interval 1 \

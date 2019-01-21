@@ -677,7 +677,7 @@ def train_loop(args,
 
     logger.info("begin to load data")
     train_data = data.BidirectionalLMDataset(
-        args.train_path, vocab, test=(not args.shuffle), shuffle_on_load=False)
+        args.train_path, vocab, test=(not args.shuffle), shuffle_on_load=args.shuffle)
     logger.info("finished load vocab")
 
     # get train epoch size
