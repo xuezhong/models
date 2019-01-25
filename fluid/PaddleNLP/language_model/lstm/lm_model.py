@@ -77,16 +77,15 @@ def encoder(x,
             init_hidden=None,
             init_cell=None,
             para_name='',
+            custom_samples=None,
+            custom_probabilities=None,
             args=None):
     x_emb = layers.embedding(
         input=x,
         size=[vocab_size, emb_size],
         dtype='float32',
         is_sparse=False,
-        param_attr=fluid.ParamAttr(
-            name='embedding_para',
-            initializer=fluid.initializer.UniformInitializer(
-                low=-args.init_scale, high=args.init_scale)))
+        param_attr=fluid.ParamAttr(name='embedding_para'))
     rnn_input = x_emb
     rnn_outs = []
     rnn_outs_ori = []
@@ -119,29 +118,39 @@ def encoder(x,
         cells.append(cell)
         projs.append(input_proj)
 
-
-    softmax_weight = layers.create_parameter([vocab_size, emb_size], dtype="float32", name="softmax_weight", \
-     default_initializer=fluid.initializer.UniformInitializer(low=-args.init_scale, high=args.init_scale))
-    softmax_bias = layers.create_parameter([vocab_size], dtype="float32", name='softmax_bias', \
-     default_initializer=fluid.initializer.UniformInitializer(low=-args.init_scale, high=args.init_scale))
+    softmax_weight = layers.create_parameter(
+        [vocab_size, emb_size], dtype="float32", name="softmax_weight")
+    softmax_bias = layers.create_parameter(
+        [vocab_size], dtype="float32", name='softmax_bias')
     projection = layers.matmul(rnn_outs[-1], softmax_weight, transpose_y=True)
     projection = layers.elementwise_add(projection, softmax_bias)
 
     projection = layers.reshape(projection, shape=[-1, vocab_size])
 
     if args.sample_softmax:
-        sampled_logits, sampled_label = layers.sample_logits(logits=projection, label=y, num_samples=args.n_negative_samples_batch) 
-        sampled_label = layers.one_hot(input=sampled_label, depth=args.n_negative_samples_batch + 1)
+        sampled_logits, sampled_label, samples = layers.sample_logits(
+            logits=projection,
+            label=y,
+            num_samples=args.n_negative_samples_batch,
+            uniq=args.uniq_sample,
+            use_custom_samples=args.use_custom_samples,
+            custom_samples=custom_samples,
+            custom_probabilities=custom_probabilities)
+        sampled_label = layers.one_hot(
+            input=sampled_label, depth=args.n_negative_samples_batch + 1)
         loss = layers.softmax_with_cross_entropy(
-	    logits=sampled_logits, label=sampled_label, soft_label=True)
+            logits=sampled_logits, label=sampled_label, soft_label=True)
+        if args.debug:
+            layers.Print(samples, message='samples', summarize=50)
     else:
         label = layers.one_hot(input=y, depth=vocab_size)
         loss = layers.softmax_with_cross_entropy(
-	    logits=projection, label=label, soft_label=True)
+            logits=projection, label=label, soft_label=True)
     return [x_emb, projection, loss], rnn_outs, rnn_outs_ori, cells, projs
 
+
 class LanguageModel(object):
-    def __init__(self, args , vocab_size):
+    def __init__(self, args, vocab_size):
         self.args = args
         self.vocab_size = vocab_size
 
@@ -162,7 +171,8 @@ class LanguageModel(object):
         x_b = layers.data(name="x_r", shape=[1], dtype='int64', lod_level=1)
         y_b = layers.data(name="y_r", shape=[1], dtype='int64', lod_level=1)
 
-        init_hiddens_ = layers.data(name="init_hiddens", shape=[1], dtype='float32')
+        init_hiddens_ = layers.data(
+            name="init_hiddens", shape=[1], dtype='float32')
         init_cells_ = layers.data(name="init_cells", shape=[1], dtype='float32')
 
         if args.debug:
@@ -183,6 +193,27 @@ class LanguageModel(object):
         init_cell_r = layers.slice(
             init_cells, axes=[0], starts=[num_layers], ends=[2 * num_layers])
 
+        if args.use_custom_samples:
+            custom_samples = layers.data(
+                name="custom_samples",
+                shape=[args.n_negative_samples_batch + 1],
+                dtype='int64',
+                lod_level=1)
+            custom_samples_r = layers.data(
+                name="custom_samples_r",
+                shape=[args.n_negative_samples_batch + 1],
+                dtype='int64',
+                lod_level=1)
+            custom_probabilities = layers.data(
+                name="custom_probabilities",
+                shape=[args.n_negative_samples_batch + 1],
+                dtype='float32',
+                lod_level=1)
+        else:
+            custom_samples = None
+            custom_samples_r = None
+            custom_probabilities = None
+
         forward, fw_hiddens, fw_hiddens_ori, fw_cells, fw_projs = encoder(
             x_f,
             y_f,
@@ -191,6 +222,8 @@ class LanguageModel(object):
             init_hidden,
             init_cell,
             para_name='fw_',
+            custom_samples=custom_samples,
+            custom_probabilities=custom_probabilities,
             args=args)
         backward, bw_hiddens, bw_hiddens_ori, bw_cells, bw_projs = encoder(
             x_b,
@@ -200,6 +233,8 @@ class LanguageModel(object):
             init_hidden_r,
             init_cell_r,
             para_name='bw_',
+            custom_samples=custom_samples_r,
+            custom_probabilities=custom_probabilities,
             args=args)
 
         losses = layers.concat([forward[-1], backward[-1]])
@@ -217,13 +252,14 @@ class LanguageModel(object):
             layers.Print(self.loss, message='loss', summarize=320)
         self.grad_vars = [x_f, y_f, x_b, y_b, self.loss]
         self.grad_vars_name = ['x', 'y', 'x_r', 'y_r', 'final_loss']
-        fw_vars_name = ['x_emb', 'proj', 'loss'] + ['init_hidden', 'init_cell'] + [
-            'rnn_out', 'rnn_out2', 'cell', 'cell2', 'xproj', 'xproj2'
-        ]
+        fw_vars_name = ['x_emb', 'proj', 'loss'] + [
+            'init_hidden', 'init_cell'
+        ] + ['rnn_out', 'rnn_out2', 'cell', 'cell2', 'xproj', 'xproj2']
         bw_vars_name = ['x_emb_r', 'proj_r', 'loss_r'] + [
             'init_hidden_r', 'init_cell_r'
         ] + [
-            'rnn_out_r', 'rnn_out2_r', 'cell_r', 'cell2_r', 'xproj_r', 'xproj2_r'
+            'rnn_out_r', 'rnn_out2_r', 'cell_r', 'cell2_r', 'xproj_r',
+            'xproj2_r'
         ]
         fw_vars = forward + [init_hidden, init_cell
                              ] + fw_hiddens + fw_cells + fw_projs
@@ -234,17 +270,23 @@ class LanguageModel(object):
             self.grad_vars.append(bw_vars[i])
             self.grad_vars_name.append(fw_vars_name[i])
             self.grad_vars_name.append(bw_vars_name[i])
-        self.feed_order = ['x', 'y', 'x_r', 'y_r']
+        if args.use_custom_samples:
+            self.feed_order = [
+                'x', 'y', 'x_r', 'y_r', 'custom_samples', 'custom_samples_r',
+                'custom_probabilities'
+            ]
+        else:
+            self.feed_order = ['x', 'y', 'x_r', 'y_r']
         self.last_hidden = [
             fluid.layers.sequence_last_step(input=x)
             for x in fw_hiddens_ori + bw_hiddens_ori
         ]
         self.last_cell = [
-            fluid.layers.sequence_last_step(input=x) for x in fw_cells + bw_cells
+            fluid.layers.sequence_last_step(input=x)
+            for x in fw_cells + bw_cells
         ]
         self.last_hidden = layers.concat(self.last_hidden, axis=0)
         self.last_cell = layers.concat(self.last_cell, axis=0)
         if args.debug:
             layers.Print(self.last_cell, message='last_cell', summarize=10)
             layers.Print(self.last_hidden, message='last_hidden', summarize=10)
-

@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import six
 import numpy as np
 import time
 import os
@@ -186,7 +187,10 @@ def load_params(train_prog, train_exe, place, logger, args=None):
     for data in listDir(args.para_load_dir):
         slot = int(data.split('_')[1].split('.')[0])
         with open(data, 'rb') as fin:
-            p_array = pickle.load(fin)
+            if six.PY2:
+                p_array = pickle.load(fin)
+            else:
+                p_array = pickle.load(fin, encoding='bytes')
             p_array = p_array.reshape((-1))
             offset = 0
             for name in name_dict:
@@ -200,7 +204,10 @@ def load_params(train_prog, train_exe, place, logger, args=None):
                         tensor_len = np.prod(shape)
                         new_array = p_array[offset:offset + tensor_len]
                         new_array = new_array.reshape(shape)
-                        placex = fluid.CUDAPlace(card)
+                        if args.use_gpu:
+                            placex = fluid.CUDAPlace(card)
+                        else:
+                            placex = fluid.CPUPlace()
                         tensor.set(new_array.astype(np.float32), placex)
                         logger.info('card {} loaded {}[{}] from {}[{}:{}]'.
                                     format(card, name, shape, data, offset,
@@ -335,7 +342,29 @@ def prepare_batch_input(batch, args):
     y_r = batch['next_token_id_reverse']
     inst = []
     for i in range(len(x)):
-        inst.append([x[i], y[i], x_r[i], y_r[i]])
+        if args.use_custom_samples:
+            custom_samples_array = np.zeros(
+                (args.num_steps, args.n_negative_samples_batch + 1),
+                dtype='int64')
+            custom_samples_array_r = np.zeros(
+                (args.num_steps, args.n_negative_samples_batch + 1),
+                dtype='int64')
+            custom_probabilities_array = np.zeros(
+                (args.num_steps, args.n_negative_samples_batch + 1),
+                dtype='float32')
+            for j in range(args.num_steps):
+                for k in range(args.n_negative_samples_batch + 1):
+                    custom_samples_array[j][k] = k
+                    custom_samples_array_r[j][k] = k
+                    custom_probabilities_array[j][k] = 1.0
+                custom_samples_array[j][0] = y[i][j]
+                custom_samples_array_r[j][0] = y_r[i][j]
+            inst.append([
+                x[i], y[i], x_r[i], y_r[i], custom_samples_array,
+                custom_samples_array_r, custom_probabilities_array
+            ])
+        else:
+            inst.append([x[i], y[i], x_r[i], y_r[i]])
     return inst
 
 
@@ -537,28 +566,28 @@ def train():
 
     if args.local:
         logger.info("local start_up:")
-        train_loop(args, logger, vocab, train_prog, startup_prog, infer_prog, model, optimizer)
+        train_loop(args, logger, vocab, train_prog, startup_prog, infer_prog,
+                   model, optimizer)
     else:
         if args.update_method == "nccl2":
             trainer_id = int(os.getenv("PADDLE_TRAINER_ID", "0"))
             if args.test_nccl:
                 worker_endpoints_env = os.getenv("PADDLE_WORK_ENDPOINTS")
                 worker_endpoints = worker_endpoints_env.split(',')
-                trainers_num=len(worker_endpoints)
-                current_endpoint=worker_endpoints[trainer_id]
+                trainers_num = len(worker_endpoints)
+                current_endpoint = worker_endpoints[trainer_id]
             else:
-		port = os.getenv("PADDLE_PORT")
-		worker_ips = os.getenv("PADDLE_TRAINERS")
-		worker_endpoints = []
-		for ip in worker_ips.split(","):
-		    worker_endpoints.append(':'.join([ip, port]))
+                port = os.getenv("PADDLE_PORT")
+                worker_ips = os.getenv("PADDLE_TRAINERS")
+                worker_endpoints = []
+                for ip in worker_ips.split(","):
+                    worker_endpoints.append(':'.join([ip, port]))
                 worker_endpoints_env = ','.join(worker_endpoints)
-		trainers_num = len(worker_endpoints)
-		current_endpoint = os.getenv("POD_IP") + ":" + port
+                trainers_num = len(worker_endpoints)
+                current_endpoint = os.getenv("POD_IP") + ":" + port
             if trainer_id == 0:
                 logger.info("train_id == 0, sleep 60s")
                 time.sleep(60)
-
 
             logger.info("trainers_num:{}".format(trainers_num))
             logger.info("worker_endpoints:{}".format(worker_endpoints))
@@ -572,8 +601,9 @@ def train():
                 current_endpoint=current_endpoint,
                 program=train_prog,
                 startup_program=startup_prog)
-            train_loop(args, logger, vocab, train_prog, startup_prog, infer_prog, model, optimizer, trainers_num,
-                       trainer_id, worker_endpoints)
+            train_loop(args, logger, vocab, train_prog, startup_prog,
+                       infer_prog, model, optimizer, trainers_num, trainer_id,
+                       worker_endpoints)
         else:
             port = os.getenv("PADDLE_PORT", "6174")
             pserver_ips = os.getenv("PADDLE_PSERVERS")  # ip,ip...
@@ -615,7 +645,8 @@ def train():
             elif training_role == "TRAINER":
                 logger.info("distributed: trainer started")
                 trainer_prog = t.get_trainer_program()
-                train_loop(args, logger, vocab, train_prog, startup_prog, infer_prog, model, optimizer)
+                train_loop(args, logger, vocab, train_prog, startup_prog,
+                           infer_prog, model, optimizer)
             else:
                 logger.critical(
                     "environment var TRAINER_ROLE should be TRAINER os PSERVER")
@@ -646,15 +677,13 @@ def train_loop(args,
 
     if args.load_dir:
         logger.info('load from {}'.format(args.load_dir))
-        fluid.io.load_persistables(
-            exe, args.load_dir, main_program=main_prog)
+        fluid.io.load_persistables(exe, args.load_dir, main_program=main_prog)
     else:
         exe.run(startup_prog)
 
     # prepare data
     feed_list = [
-        main_prog.global_block().var(var_name)
-        for var_name in model.feed_order
+        main_prog.global_block().var(var_name) for var_name in model.feed_order
     ]
     feeder = fluid.DataFeeder(feed_list, place)
 
@@ -677,7 +706,10 @@ def train_loop(args,
 
     logger.info("begin to load data")
     train_data = data.BidirectionalLMDataset(
-        args.train_path, vocab, test=(not args.shuffle), shuffle_on_load=args.shuffle)
+        args.train_path,
+        vocab,
+        test=(not args.shuffle),
+        shuffle_on_load=args.shuffle)
     logger.info("finished load vocab")
 
     # get train epoch size
@@ -685,6 +717,18 @@ def train_loop(args,
     total_time = 0.0
     batch_size = args.batch_size
     hidden_size = args.hidden_size
+    custom_samples_array = np.zeros(
+        (batch_size, args.num_steps, args.n_negative_samples_batch + 1),
+        dtype='int64')
+    custom_probabilities_array = np.zeros(
+        (batch_size, args.num_steps, args.n_negative_samples_batch + 1),
+        dtype='float32')
+    for i in range(batch_size):
+        for j in range(0, args.num_steps):
+            for k in range(0, args.n_negative_samples_batch + 1):
+                custom_samples_array[i][j][k] = k
+                custom_probabilities_array[i][j][k] = 1.0
+
     for epoch_id in range(args.max_epoch):
         start_time = time.time()
         logger.info("epoch id {}".format(epoch_id))
@@ -696,8 +740,7 @@ def train_loop(args,
         n_batch_loss = 0.0
         n_batch_cnt = 0
         last_hidden_values = np.zeros(
-            (dev_count,
-             args.num_layers * 2 * batch_size * args.embed_size),
+            (dev_count, args.num_layers * 2 * batch_size * args.embed_size),
             dtype='float32')
         last_cell_values = np.zeros(
             (dev_count, args.num_layers * 2 * batch_size * hidden_size),
@@ -721,18 +764,17 @@ def train_loop(args,
             fetch_outs = parallel_executor.run(
                 feed=feed,
                 fetch_list=[
-                    model.loss.name, model.last_hidden.name, model.last_cell.name
+                    model.loss.name, model.last_hidden.name,
+                    model.last_cell.name
                 ],  # + [x[0] for x in names] + [x[0] for x in grad_names],
                 return_numpy=False)
             cost_train = np.array(fetch_outs[0]).mean()
             last_hidden_values = np.array(fetch_outs[1])
             last_hidden_values = last_hidden_values.reshape(
-                (dev_count,
-                 args.num_layers * 2 * batch_size * args.embed_size))
+                (dev_count, args.num_layers * 2 * batch_size * args.embed_size))
             last_cell_values = np.array(fetch_outs[2])
-            last_cell_values = last_cell_values.reshape(
-                (dev_count,
-                 args.num_layers * 2 * batch_size * args.hidden_size))
+            last_cell_values = last_cell_values.reshape((
+                dev_count, args.num_layers * 2 * batch_size * args.hidden_size))
 
             #vars = fetch_outs[2:2+len(names)]
             #grad_vars = fetch_outs[2+len(names):]
@@ -747,16 +789,16 @@ def train_loop(args,
 
             if batch_id > 0 and batch_id % log_interval == 0:
                 #vars_print(logger, args, vars=(vars, names), grad_vars=(grad_vars, grad_names))
-                print_para(main_prog, parallel_executor, logger,
-                           optimizer, args)
+                print_para(main_prog, parallel_executor, logger, optimizer,
+                           args)
                 ppl = np.exp(n_batch_loss / n_batch_cnt)
                 logger.info("ppl from {} to {} is {} ".format(
                     batch_id - log_interval, batch_id, ppl))
                 n_batch_loss = 0.0
                 n_batch_cnt = 0
             if batch_id > 0 and batch_id % args.dev_interval == 0:
-                valid_ppl = eval(vocab, infer_prog, model.feed_order,
-                                 dev_count, model.loss, place, logger, args)
+                valid_ppl = eval(vocab, infer_prog, model.feed_order, dev_count,
+                                 model.loss, place, logger, args)
                 logger.info("valid ppl {}".format(valid_ppl))
             if batch_id > 0 and batch_id % args.save_interval == 0:
                 model_path = os.path.join("model_new/",
@@ -764,9 +806,7 @@ def train_loop(args,
                 if not os.path.isdir(model_path):
                     os.makedirs(model_path)
                 fluid.io.save_persistables(
-                    executor=exe,
-                    dirname=model_path,
-                    main_program=main_prog)
+                    executor=exe, dirname=model_path, main_program=main_prog)
             if args.detail and batch_id > 100:
                 exit()
 
@@ -784,11 +824,11 @@ def train_loop(args,
             os.makedirs(model_path)
         fluid.io.save_persistables(
             executor=exe, dirname=model_path, main_program=main_prog)
-        valid_ppl = eval(vocab, infer_prog, model.feed_order,
-                         dev_count, model.loss, place, logger, args)
+        valid_ppl = eval(vocab, infer_prog, model.feed_order, dev_count,
+                         model.loss, place, logger, args)
         logger.info("valid ppl {}".format(valid_ppl))
-    test_ppl = eval(vocab, infer_prog, model.feed_order, dev_count,
-                    model.loss, place, logger, args)
+    test_ppl = eval(vocab, infer_prog, model.feed_order, dev_count, model.loss,
+                    place, logger, args)
     logger.info("test ppl {}".format(test_ppl))
 
 

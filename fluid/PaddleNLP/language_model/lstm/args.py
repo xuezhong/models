@@ -43,11 +43,6 @@ def parse_args():
         default=4096,
         help="The size of rnn hidden unit. (default: %(default)d)")
     parser.add_argument(
-        "--init_scale",
-        type=float,
-        default=0.01,
-        help="init scale. (default: %(default)f)")
-    parser.add_argument(
         "--num_layers",
         type=int,
         default=2,
@@ -103,6 +98,8 @@ def parse_args():
     parser.add_argument('--debug', type=bool, default=False)
     parser.add_argument('--local', type=bool, default=False)
     parser.add_argument('--shuffle', type=bool, default=False)
+    parser.add_argument('--uniq_sample', type=bool, default=True)
+    parser.add_argument('--use_custom_samples', type=bool, default=False)
     parser.add_argument('--para_load_dir', type=str, default='')
     parser.add_argument('--para_save_dir', type=str, default='')
     parser.add_argument('--train_path', type=str, default='')

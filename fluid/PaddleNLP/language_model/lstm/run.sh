@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=3 python  train.py \
+CUDA_VISIBLE_DEVICES=2 python  train.py \
 --train_path='baike/train/sentence_file_*'  \
 --test_path='baike/dev/sentence_file_*'  \
 --vocab_path baike/vocabulary_min5k.txt \

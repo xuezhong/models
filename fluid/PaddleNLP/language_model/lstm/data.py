@@ -6,9 +6,9 @@ import numpy as np
 
 # from typing import List
 
-import sys
-reload(sys)
-sys.setdefaultencoding('utf8')
+#import sys
+#reload(sys)
+#sys.setdefaultencoding('utf8')
 
 
 class Vocabulary(object):
@@ -29,10 +29,10 @@ class Vocabulary(object):
         self._bos = -1
         self._eos = -1
 
-        with open(filename) as f:
+        with open(filename, encoding='utf-8') as f:
             idx = 0
             for line in f:
-                word_name = line.strip().decode(encoding='utf-8')
+                word_name = line.strip()
                 if word_name == '<S>':
                     self._bos = idx
                 elif word_name == '</S>':
@@ -98,6 +98,145 @@ class Vocabulary(object):
             return np.array([self.eos] + word_ids + [self.bos], dtype=np.int32)
         else:
             return np.array([self.bos] + word_ids + [self.eos], dtype=np.int32)
+
+
+class UnicodeCharsVocabulary(Vocabulary):
+    """Vocabulary containing character-level and word level information.
+
+    Has a word vocabulary that is used to lookup word ids and
+    a character id that is used to map words to arrays of character ids.
+
+    The character ids are defined by ord(c) for c in word.encode('utf-8')
+    This limits the total number of possible char ids to 256.
+    To this we add 5 additional special ids: begin sentence, end sentence,
+        begin word, end word and padding.
+
+    WARNING: for prediction, we add +1 to the output ids from this
+    class to create a special padding id (=0).  As a result, we suggest
+    you use the `Batcher`, `TokenBatcher`, and `LMDataset` classes instead
+    of this lower level class.  If you are using this lower level class,
+    then be sure to add the +1 appropriately, otherwise embeddings computed
+    from the pre-trained model will be useless.
+    """
+
+    def __init__(self, filename, max_word_length, **kwargs):
+        super(UnicodeCharsVocabulary, self).__init__(filename, **kwargs)
+        self._max_word_length = max_word_length
+
+        # char ids 0-255 come from utf-8 encoding bytes
+        # assign 256-300 to special chars
+        self.bos_char = 256  # <begin sentence>
+        self.eos_char = 257  # <end sentence>
+        self.bow_char = 258  # <begin word>
+        self.eow_char = 259  # <end word>
+        self.pad_char = 260  # <padding>
+
+        num_words = len(self._id_to_word)
+
+        self._word_char_ids = np.zeros(
+            [num_words, max_word_length], dtype=np.int32)
+
+        # the charcter representation of the begin/end of sentence characters
+        def _make_bos_eos(c):
+            r = np.zeros([self.max_word_length], dtype=np.int32)
+            r[:] = self.pad_char
+            r[0] = self.bow_char
+            r[1] = c
+            r[2] = self.eow_char
+            return r
+
+        self.bos_chars = _make_bos_eos(self.bos_char)
+        self.eos_chars = _make_bos_eos(self.eos_char)
+
+        for i, word in enumerate(self._id_to_word):
+            self._word_char_ids[i] = self._convert_word_to_char_ids(word)
+
+        self._word_char_ids[self.bos] = self.bos_chars
+        self._word_char_ids[self.eos] = self.eos_chars
+        # TODO: properly handle <UNK>
+
+    @property
+    def word_char_ids(self):
+        return self._word_char_ids
+
+    @property
+    def max_word_length(self):
+        return self._max_word_length
+
+    def _convert_word_to_char_ids(self, word):
+        code = np.zeros([self.max_word_length], dtype=np.int32)
+        code[:] = self.pad_char
+
+        word_encoded = word.encode('utf-8',
+                                   'ignore')[:(self.max_word_length - 2)]
+        code[0] = self.bow_char
+        for k, chr_id in enumerate(word_encoded, start=1):
+            code[k] = ord(chr_id)
+        code[k + 1] = self.eow_char
+
+        return code
+
+    def word_to_char_ids(self, word):
+        if word in self._word_to_id:
+            return self._word_char_ids[self._word_to_id[word]]
+        else:
+            return self._convert_word_to_char_ids(word)
+
+    def encode_chars(self, sentence, reverse=False, split=True):
+        '''
+        Encode the sentence as a white space delimited string of tokens.
+        '''
+        if split:
+            chars_ids = [
+                self.word_to_char_ids(cur_word) for cur_word in sentence.split()
+            ]
+        else:
+            chars_ids = [
+                self.word_to_char_ids(cur_word) for cur_word in sentence
+            ]
+        if reverse:
+            return np.vstack([self.eos_chars] + chars_ids + [self.bos_chars])
+        else:
+            return np.vstack([self.bos_chars] + chars_ids + [self.eos_chars])
+
+
+class Batcher(object):
+    ''' 
+    Batch sentences of tokenized text into character id matrices.
+    '''
+
+    # def __init__(self, lm_vocab_file: str, max_token_length: int):
+    def __init__(self, lm_vocab_file, max_token_length):
+        '''
+        lm_vocab_file = the language model vocabulary file (one line per
+            token)
+        max_token_length = the maximum number of characters in each token
+        '''
+        max_token_length = int(max_token_length)
+        self._lm_vocab = UnicodeCharsVocabulary(lm_vocab_file, max_token_length)
+        self._max_token_length = max_token_length
+
+    # def batch_sentences(self, sentences: List[List[str]]):
+    def batch_sentences(self, sentences):
+        '''
+        Batch the sentences as character ids
+        Each sentence is a list of tokens without <s> or </s>, e.g.
+        [['The', 'first', 'sentence', '.'], ['Second', '.']]
+        '''
+        n_sentences = len(sentences)
+        max_length = max(len(sentence) for sentence in sentences) + 2
+
+        X_char_ids = np.zeros(
+            (n_sentences, max_length, self._max_token_length), dtype=np.int64)
+
+        for k, sent in enumerate(sentences):
+            length = len(sent) + 2
+            char_ids_without_mask = self._lm_vocab.encode_chars(
+                sent, split=False)
+            # add one so that 0 is the mask value
+            X_char_ids[k, :length, :] = char_ids_without_mask + 1
+
+        return X_char_ids
 
 
 class TokenBatcher(object):
@@ -227,7 +366,6 @@ class LMDataset(object):
     def _choose_random_shard(self):
         if len(self._shards_to_choose) == 0:
             self._shards_to_choose = list(self._all_shards)
-            print('one epoch end and shuffle data')
             random.shuffle(self._shards_to_choose)
         shard_name = self._shards_to_choose.pop()
         return shard_name
@@ -261,16 +399,8 @@ class LMDataset(object):
             list of (id, char_id) tuples.
         """
         print('Loading data from: %s' % shard_name)
-        with open(shard_name) as f:
+        with open(shard_name, encoding='utf-8') as f:
             sentences_raw = f.readlines()
-            new = []
-            for x in sentences_raw:
-                try:
-                    new.append(x.strip().decode(encoding='utf-8'))
-                except:
-                    print('error encoding {}'.format(x))
-                    continue
-            sentences_raw = new
 
         if self._reverse:
             sentences = []
@@ -282,6 +412,7 @@ class LMDataset(object):
             sentences = sentences_raw
 
         if self._shuffle_on_load:
+            print('shuffle sentences')
             random.shuffle(sentences)
 
         ids = [
@@ -349,16 +480,17 @@ class BidirectionalLMDataset(object):
     def iter_batches(self, batch_size, num_steps):
         max_word_length = self._data_forward.max_word_length
 
-        while True:
-            try:
-                X = _get_batch(self._data_forward.get_sentence(), batch_size,
-                               num_steps, max_word_length).next()
-                Xr = _get_batch(self._data_reverse.get_sentence(), batch_size,
-                                num_steps, max_word_length).next()
-            except StopIteration:
-                break
+        for X, Xr in zip(
+                _get_batch(self._data_forward.get_sentence(), batch_size,
+                           num_steps, max_word_length),
+                _get_batch(self._data_reverse.get_sentence(), batch_size,
+                           num_steps, max_word_length)):
 
             for k, v in Xr.items():
                 X[k + '_reverse'] = v
 
             yield X
+
+
+class InvalidNumberOfCharacters(Exception):
+    pass
