@@ -128,25 +128,33 @@ def encoder(x,
     projection = layers.reshape(projection, shape=[-1, vocab_size])
 
     if args.sample_softmax:
-        sampled_logits, sampled_label, samples = layers.sample_logits(
+        sampled_logits, sampled_label, samples, probabilities = layers.sample_logits(
             logits=projection,
             label=y,
             num_samples=args.n_negative_samples_batch,
             uniq=args.uniq_sample,
+            remove_accidental_hits=False,
             use_custom_samples=args.use_custom_samples,
             custom_samples=custom_samples,
-            custom_probabilities=custom_probabilities)
+            custom_probabilities=custom_probabilities,
+            seed=args.random_seed)
         sampled_label = layers.one_hot(
             input=sampled_label, depth=args.n_negative_samples_batch + 1)
         loss = layers.softmax_with_cross_entropy(
             logits=sampled_logits, label=sampled_label, soft_label=True)
         if args.debug:
-            layers.Print(samples, message='samples', summarize=50)
+            layers.Print(samples, message='samples', summarize=500)
+            layers.Print(
+                sampled_logits, message='sampled_logits', summarize=8000)
+            layers.Print(sampled_label, message='sampled_label', summarize=100)
+            layers.Print(loss, message='out_loss', summarize=100)
     else:
         label = layers.one_hot(input=y, depth=vocab_size)
         loss = layers.softmax_with_cross_entropy(
             logits=projection, label=label, soft_label=True)
-    return [x_emb, projection, loss], rnn_outs, rnn_outs_ori, cells, projs
+    return [x_emb, projection, loss], rnn_outs, rnn_outs_ori, cells, [
+        sampled_logits, probabilities
+    ]  #projs
 
 
 class LanguageModel(object):
@@ -249,6 +257,7 @@ class LanguageModel(object):
             layers.Print(y_b, message='y_b', summarize=10)
             layers.Print(x_emb, message='x_emb', summarize=10)
             layers.Print(projection, message='projection', summarize=10)
+            layers.Print(losses, message='losses', summarize=320)
             layers.Print(self.loss, message='loss', summarize=320)
         self.grad_vars = [x_f, y_f, x_b, y_b, self.loss]
         self.grad_vars_name = ['x', 'y', 'x_r', 'y_r', 'final_loss']
