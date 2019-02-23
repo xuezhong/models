@@ -129,12 +129,14 @@ def encoder(x,
 
     if args.sample_softmax:
         loss = layers.sampled_softmax_with_cross_entropy(
-            logits=projection, label=y,\
-            num_samples=args.n_negative_samples_batch, seed=args.random_seed)
+            logits=projection,
+            label=y,
+            num_samples=args.n_negative_samples_batch,
+            seed=args.random_seed)
         if args.debug:
             layers.Print(samples, message='samples', summarize=500)
             layers.Print(
-                sampled_logits, message='sampled_logits', summarize=8000)
+                sampled_logits, message='sampled_logits', summarize=100)
             layers.Print(sampled_label, message='sampled_label', summarize=100)
             layers.Print(loss, message='out_loss', summarize=100)
     else:
