@@ -1,6 +1,6 @@
 export CPU_NUM=1
 #CUDA_VISIBLE_DEVICES=5  python  train.py \
-CUDA_VISIBLE_DEVICES=4 python train.py \
+CUDA_VISIBLE_DEVICES=0 python train.py \
 	--data_path baike  \
 	--vocab_path baike/vocabulary_min5k.txt \
 	--dropout 0.0 \
